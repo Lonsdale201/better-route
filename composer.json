@@ -27,6 +27,11 @@
       "BetterRoute\\Tests\\": "tests/"
     }
   },
+  "config": {
+    "platform": {
+      "php": "8.1.0"
+    }
+  },
   "scripts": {
     "test": "phpunit -c phpunit.xml.dist",
     "analyse": "phpstan analyse",
