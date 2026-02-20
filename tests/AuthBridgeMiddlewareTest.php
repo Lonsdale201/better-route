@@ -123,7 +123,7 @@ final class AuthBridgeMiddlewareTest extends TestCase
         ]));
 
         $this->expectException(ApiException::class);
-        $middleware->handle($context, static fn (): null => null);
+        $middleware->handle($context, static fn () => null);
     }
 }
 

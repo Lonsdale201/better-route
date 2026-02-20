@@ -1,69 +1,97 @@
 # better-route
 
-Thin PHP 8.1+ REST routing and resource library for WordPress (headless and integration use-cases).
+A thin PHP 8.1+ REST routing and resource library for WordPress.
 
-## Status
+Built for headless and integration-heavy projects where you want a stable, versioned API contract on top of WP.
 
-Early development (`0.1.0-dev`).
+## What It Gives You
 
-## Local development
+- Fluent REST router on top of `register_rest_route()`
+- Middleware pipeline (`global -> group -> route`)
+- Resource DSL for:
+  - CPT-backed endpoints
+  - custom table-backed endpoints
+- Strict query contract (unknown params -> `400`)
+- Unified error payload with `requestId`
+- Built-in auth bridge middlewares:
+  - JWT/Bearer
+  - cookie + nonce
+  - application password
+- Write safety middlewares:
+  - idempotency key
+  - optimistic lock (`If-Match` / version)
+- Observability baseline:
+  - audit event schema
+  - metrics middleware
+  - Prometheus-friendly sink
 
-1. Install dependencies in the library:
+## Install
 
-```bash
-composer install
-```
-
-2. Run quality checks:
-
-```bash
-composer test
-composer analyse
-composer cs-check
-```
-
-3. Load from a host plugin with Composer `path` repository:
+For local development (path repository + symlink):
 
 ```json
 {
+  "require": {
+    "better-route/better-route": "*"
+  },
   "repositories": [
     {
       "type": "path",
       "url": "../../../libraries/better-route",
-      "options": {
-        "symlink": true
-      }
+      "options": {"symlink": true}
     }
   ]
 }
 ```
 
-## Current scope
+After package publication, consumers can use normal Composer constraint (for example `^1.0`).
 
-- M1 done: router, dispatcher bridge, middleware pipeline, response/error normalization.
-- M2 done: CPT resource list/get with strict query contract.
-- M3 done: custom table resource list/get with allowlist + prepared statement adapter.
-- M4 done: contract freeze + route/resource meta model + contract extraction API.
-- M5 done: resource CRUD (`create/update/delete`) for CPT and custom table resources.
-- Post-M5 hardening: middleware factory hook, policy-driven route permissions, typed filter schema, deep pagination cap (`maxOffset`), CPT visibility policy/status handling.
-- Auth bridge: claims-to-user mapper + ready auth middleware for `jwt/bearer`, `cookie+nonce`, `application password`.
-- Write safety: idempotency key middleware + optimistic lock middleware + standard `409/412` error classes.
-- Observability baseline: standard audit event schema + metrics middleware + Prometheus-friendly metric sink.
-- Built-in middleware implementations: JWT auth (HS256 verifier), transient rate limiter/cache store/idempotency store, structured audit logger.
-- Smoke host plugin: `/home/idp/webapps/app-idp/wp-content/plugins/better-route`
-
-## Minimal usage
+## Quick Start
 
 ```php
 use BetterRoute\Router\Router;
 
 add_action('rest_api_init', function () {
-    $router = Router::make('better-route', 'v1');
-    $router->get('/ping', fn () => ['pong' => true])
-        ->meta(['operationId' => 'ping']);
+    Router::make('better-route', 'v1')
+        ->get('/ping', fn () => ['pong' => true])
+        ->meta(['operationId' => 'ping', 'tags' => ['System']]);
+});
+```
+
+## Router + Middleware Example
+
+```php
+use BetterRoute\Router\Router;
+use BetterRoute\Middleware\Jwt\JwtAuthMiddleware;
+use BetterRoute\Middleware\Jwt\Hs256JwtVerifier;
+use BetterRoute\Middleware\Auth\WpClaimsUserMapper;
+
+add_action('rest_api_init', function () {
+    $jwt = new Hs256JwtVerifier($_ENV['JWT_SECRET']);
+
+    $router = Router::make('better-route', 'v1')
+        ->middlewareFactory(function (string $class) use ($jwt) {
+            if ($class === JwtAuthMiddleware::class) {
+                return new JwtAuthMiddleware($jwt, ['content:*'], new WpClaimsUserMapper());
+            }
+
+            return null;
+        });
+
+    $router->group('/secure', function (Router $r): void {
+        $r->middleware([JwtAuthMiddleware::class]);
+
+        $r->get('/me', fn () => ['ok' => true])
+            ->meta(['operationId' => 'secureMe', 'tags' => ['Auth']]);
+    });
+
     $router->register();
 });
 ```
+
+## Resource DSL Examples
+
+### CPT Resource
 
 ```php
 use BetterRoute\Resource\Resource;
@@ -73,7 +101,7 @@ add_action('rest_api_init', function () {
         ->restNamespace('better-route/v1')
         ->sourceCpt('post')
         ->allow(['list', 'get', 'create', 'update', 'delete'])
-        ->fields(['id', 'title', 'slug', 'excerpt', 'date', 'status'])
+        ->fields(['id', 'title', 'slug', 'excerpt', 'content', 'date', 'status', 'author'])
         ->filters(['status', 'author', 'after', 'before'])
         ->filterSchema([
             'status' => ['type' => 'enum', 'values' => ['publish', 'draft', 'private']],
@@ -81,21 +109,23 @@ add_action('rest_api_init', function () {
             'after' => 'date',
             'before' => 'date',
         ])
+        ->sort(['date', 'id'])
         ->policy([
             'permissions' => [
-                'list' => 'read',
-                'get' => 'read',
+                'list' => true,
+                'get' => true,
                 'create' => 'edit_posts',
                 'update' => 'edit_posts',
                 'delete' => 'delete_posts',
             ],
         ])
-        ->cptVisibleStatuses(['publish', 'draft', 'private'])
-        ->sort(['date', 'id'])
+        ->maxPerPage(100)
         ->maxOffset(5000)
         ->register();
 });
 ```
+
+### Custom Table Resource
 
 ```php
 use BetterRoute\Resource\Resource;
@@ -105,80 +135,69 @@ add_action('rest_api_init', function () {
         ->restNamespace('better-route/v1')
         ->sourceTable('ai_raw_articles', 'id')
         ->allow(['list', 'get', 'create', 'update', 'delete'])
-        ->fields(['id', 'source', 'title', 'created_at'])
-        ->filters(['source'])
-        ->sort(['id', 'created_at'])
-        ->filterSchema(['source' => 'string'])
-        ->defaultPerPage(20)
+        ->fields(['id', 'source', 'title', 'lang', 'published', 'version', 'created_at', 'updated_at'])
+        ->filters(['source', 'lang', 'published'])
+        ->filterSchema([
+            'source' => 'string',
+            'lang' => 'string',
+            'published' => 'bool',
+        ])
+        ->sort(['created_at', 'id'])
         ->maxPerPage(100)
         ->maxOffset(5000)
-        ->uniformEnvelope(false)
         ->register();
 });
 ```
 
-## Configuration highlights
+## Built-in Middlewares
 
-1. Middleware DI/factory:
+### Auth bridge
 
-```php
-$router = Router::make('better-route', 'v1')
-    ->middlewareFactory(function (string $middlewareClass): mixed {
-        if ($middlewareClass === JwtAuthMiddleware::class) {
-            return new JwtAuthMiddleware($jwtVerifier, $userMapper);
-        }
-
-        return null;
-    });
-```
-
-2. Pagination policy per resource:
-- `defaultPerPage(int)`
-- `maxPerPage(int)`
-
-3. Success payload style for `get` endpoints:
-- default: raw object
-- `uniformEnvelope(true)`: `{ "data": { ... } }`
-
-4. Resource-level permission policy:
-- `policy(['public' => true])`
-- `policy(['permissions' => ['list' => 'read', 'create' => 'edit_posts']])`
-- `policy(['permissions' => ['*' => ['read', 'edit_posts']]])` (any listed capability)
-- `policy(['permissionCallback' => fn (...) => bool|WP_Error])`
-
-5. Strict, typed query filters:
-- `filterSchema(['author' => 'int', 'published' => 'bool', 'after' => 'date'])`
-- enum filter: `['type' => 'enum', 'values' => ['draft', 'publish']]`
-
-6. Large-list guardrail:
-- `maxOffset(int)` rejects deep pagination requests when `(page - 1) * per_page` exceeds cap.
-
-7. Built-in WP adapters:
-- `BetterRoute\Middleware\Jwt\Hs256JwtVerifier`
-- `BetterRoute\Middleware\RateLimit\TransientRateLimiter`
-- `BetterRoute\Middleware\Cache\TransientCacheStore`
-- `BetterRoute\Middleware\Write\TransientIdempotencyStore`
-- `BetterRoute\Middleware\Audit\ErrorLogAuditLogger`
-
-8. Auth bridge middleware:
+- `BetterRoute\Middleware\Jwt\JwtAuthMiddleware`
 - `BetterRoute\Middleware\Auth\BearerTokenAuthMiddleware`
 - `BetterRoute\Middleware\Auth\CookieNonceAuthMiddleware`
 - `BetterRoute\Middleware\Auth\ApplicationPasswordAuthMiddleware`
 - `BetterRoute\Middleware\Auth\WpClaimsUserMapper`
 
-9. Write safety middleware:
+### Write safety
+
 - `BetterRoute\Middleware\Write\IdempotencyMiddleware`
 - `BetterRoute\Middleware\Write\OptimisticLockMiddleware`
 - `BetterRoute\Http\ConflictException` (`409`)
 - `BetterRoute\Http\PreconditionFailedException` (`412`)
 
-10. Observability primitives:
+### Observability
+
+- `BetterRoute\Middleware\Audit\AuditMiddleware`
 - `BetterRoute\Middleware\Observability\MetricsMiddleware`
-- `BetterRoute\Observability\MetricSinkInterface`
-- `BetterRoute\Observability\InMemoryMetricSink`
-- `BetterRoute\Observability\PrometheusMetricSink`
 - `BetterRoute\Observability\AuditEventFactory`
+- `BetterRoute\Observability\PrometheusMetricSink`
 
-## Documentation
+## Error Contract
 
-This `README.md` is the canonical public documentation of the library.
+```json
+{
+  "error": {
+    "code": "validation_failed",
+    "message": "Invalid request.",
+    "requestId": "req_...",
+    "details": {
+      "fieldErrors": {
+        "title": ["required"]
+      }
+    }
+  }
+}
+```
+
+## Local Quality Commands
+
+```bash
+composer test
+composer analyse
+composer cs-check
+```
+
+## Current Status
+
+Active development. Core features are implemented and smoke-tested in a WP host plugin.

@@ -2,7 +2,13 @@
   "name": "better-route/better-route",
   "description": "Thin PHP 8.1+ REST routing and resource library for WordPress.",
   "type": "library",
-  "license": "proprietary",
+  "license": "MIT",
+  "authors": [
+    {
+      "name": "Soczó Kristóf",
+      "email": "lonsdale201@hotmail.com"
+    }
+  ],
   "require": {
     "php": "^8.1"
   },
@@ -19,6 +25,11 @@
   "autoload-dev": {
     "psr-4": {
       "BetterRoute\\Tests\\": "tests/"
+    }
+  },
+  "config": {
+    "platform": {
+      "php": "8.1.0"
     }
   },
   "scripts": {
