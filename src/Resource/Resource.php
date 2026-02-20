@@ -39,6 +39,16 @@ final class Resource
     private ?CptRepositoryInterface $cptRepository = null;
     private ?TableRepositoryInterface $tableRepository = null;
 
+    /** @var list<array{
+     *   namespace: string,
+     *   method: string,
+     *   path: string,
+     *   args: array<string, mixed>,
+     *   meta: array<string, mixed>
+     * }>
+     */
+    private array $registeredContracts = [];
+
     private function __construct(
         private readonly string $name
     ) {
@@ -170,6 +180,27 @@ final class Resource
         ];
     }
 
+    /**
+     * @return list<array{
+     *   namespace: string,
+     *   method: string,
+     *   path: string,
+     *   args: array<string, mixed>,
+     *   meta: array<string, mixed>
+     * }>
+     */
+    public function contracts(bool $openApiOnly = false): array
+    {
+        if (!$openApiOnly) {
+            return $this->registeredContracts;
+        }
+
+        return array_values(array_filter(
+            $this->registeredContracts,
+            static fn (array $contract): bool => (bool) ($contract['meta']['openapi']['include'] ?? true)
+        ));
+    }
+
     public function name(): string
     {
         return $this->name;
@@ -202,11 +233,11 @@ final class Resource
                     ],
                 ];
             })->args($this->listRouteArgs())
-                ->meta([
-                    'resource' => $this->name,
-                    'action' => 'list',
-                    'policy' => $this->policy,
-                ]);
+                ->meta($this->resourceRouteMeta(
+                    action: 'list',
+                    parameters: $this->listQueryParameters(),
+                    responseSchema: '#/components/schemas/' . $this->resourceSchemaBase() . 'ListResponse'
+                ));
         }
 
         if (in_array('get', $allowed, true)) {
@@ -225,14 +256,20 @@ final class Resource
                     'required' => true,
                     'type' => 'integer',
                 ],
-            ])->meta([
-                'resource' => $this->name,
-                'action' => 'get',
-                'policy' => $this->policy,
-            ]);
+            ])->meta($this->resourceRouteMeta(
+                action: 'get',
+                parameters: [[
+                    'in' => 'path',
+                    'name' => 'id',
+                    'required' => true,
+                    'schema' => ['type' => 'integer'],
+                ]],
+                responseSchema: '#/components/schemas/' . $this->resourceSchemaBase()
+            ));
         }
 
         $router->register($dispatcher);
+        $this->registeredContracts = $router->contracts();
     }
 
     private function registerTable(?DispatcherInterface $dispatcher): void
@@ -269,11 +306,11 @@ final class Resource
                     ],
                 ];
             })->args($this->listRouteArgs())
-                ->meta([
-                    'resource' => $this->name,
-                    'action' => 'list',
-                    'policy' => $this->policy,
-                ]);
+                ->meta($this->resourceRouteMeta(
+                    action: 'list',
+                    parameters: $this->listQueryParameters(),
+                    responseSchema: '#/components/schemas/' . $this->resourceSchemaBase() . 'ListResponse'
+                ));
         }
 
         if (in_array('get', $allowed, true)) {
@@ -291,14 +328,20 @@ final class Resource
                     'required' => true,
                     'type' => 'integer',
                 ],
-            ])->meta([
-                'resource' => $this->name,
-                'action' => 'get',
-                'policy' => $this->policy,
-            ]);
+            ])->meta($this->resourceRouteMeta(
+                action: 'get',
+                parameters: [[
+                    'in' => 'path',
+                    'name' => 'id',
+                    'required' => true,
+                    'schema' => ['type' => 'integer'],
+                ]],
+                responseSchema: '#/components/schemas/' . $this->resourceSchemaBase()
+            ));
         }
 
         $router->register($dispatcher);
+        $this->registeredContracts = $router->contracts();
     }
 
     /**
@@ -345,6 +388,84 @@ final class Resource
         }
 
         return $args;
+    }
+
+    /**
+     * @return list<array<string, mixed>>
+     */
+    private function listQueryParameters(): array
+    {
+        $parameters = [
+            ['in' => 'query', 'name' => 'fields', 'required' => false, 'schema' => ['type' => 'string']],
+            ['in' => 'query', 'name' => 'sort', 'required' => false, 'schema' => ['type' => 'string']],
+            ['in' => 'query', 'name' => 'page', 'required' => false, 'schema' => ['type' => 'integer']],
+            ['in' => 'query', 'name' => 'per_page', 'required' => false, 'schema' => ['type' => 'integer']],
+        ];
+
+        foreach ($this->filters as $filter) {
+            $parameters[] = [
+                'in' => 'query',
+                'name' => $filter,
+                'required' => false,
+                'schema' => ['type' => 'string'],
+            ];
+        }
+
+        return $parameters;
+    }
+
+    /**
+     * @param list<array<string, mixed>> $parameters
+     * @return array<string, mixed>
+     */
+    private function resourceRouteMeta(string $action, array $parameters, string $responseSchema): array
+    {
+        return [
+            'resource' => $this->name,
+            'action' => $action,
+            'policy' => $this->policy,
+            'operationId' => $this->resourceOperationId($action),
+            'tags' => [$this->resourceTag()],
+            'scopes' => $this->policyScopes(),
+            'parameters' => $parameters,
+            'responseSchema' => $responseSchema,
+        ];
+    }
+
+    private function resourceOperationId(string $action): string
+    {
+        return lcfirst($this->resourceSchemaBase()) . ucfirst($action);
+    }
+
+    private function resourceTag(): string
+    {
+        return $this->resourceSchemaBase();
+    }
+
+    private function resourceSchemaBase(): string
+    {
+        $normalized = preg_replace('/[^a-zA-Z0-9]+/', ' ', $this->name) ?? $this->name;
+        return str_replace(' ', '', ucwords(strtolower(trim($normalized))));
+    }
+
+    /**
+     * @return list<string>
+     */
+    private function policyScopes(): array
+    {
+        $scopes = $this->policy['scopes'] ?? [];
+        if (!is_array($scopes)) {
+            return [];
+        }
+
+        $result = [];
+        foreach ($scopes as $scope) {
+            if (is_string($scope) && $scope !== '') {
+                $result[] = $scope;
+            }
+        }
+
+        return array_values($result);
     }
 
     private function readId(mixed $request): int

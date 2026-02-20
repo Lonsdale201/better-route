@@ -31,6 +31,9 @@ final class ResourceTableRegistrationTest extends TestCase
         self::assertCount(2, $dispatcher->registrations);
         self::assertSame('/raw-articles', $dispatcher->registrations[0]['route']->uri);
         self::assertSame('/raw-articles/(?P<id>\d+)', $dispatcher->registrations[1]['route']->uri);
+        self::assertSame('rawArticlesList', $dispatcher->registrations[0]['route']->meta['operationId']);
+        self::assertSame('rawArticlesGet', $dispatcher->registrations[1]['route']->meta['operationId']);
+        self::assertSame(['RawArticles'], $dispatcher->registrations[0]['route']->meta['tags']);
 
         $listResponse = ($dispatcher->registrations[0]['callback'])(new TableResourceFakeRequest([
             'fields' => 'id,title',
@@ -45,6 +48,25 @@ final class ResourceTableRegistrationTest extends TestCase
         $getResponse = ($dispatcher->registrations[1]['callback'])(new TableResourceFakeRequest(['id' => '1']));
         self::assertSame(200, $getResponse['status']);
         self::assertSame(1, $getResponse['body']['id']);
+    }
+
+    public function testTableResourceExposesContracts(): void
+    {
+        $resource = Resource::make('raw-articles')
+            ->restNamespace('better-route/v1')
+            ->sourceTable('ai_raw_articles', 'id')
+            ->allow(['list', 'get'])
+            ->fields(['id', 'title', 'source'])
+            ->filters(['source'])
+            ->sort(['id'])
+            ->usingTableRepository(new ArrayTableRepository());
+
+        $resource->register(new TableResourceDispatcher());
+        $contracts = $resource->contracts(true);
+
+        self::assertCount(2, $contracts);
+        self::assertSame('rawArticlesList', $contracts[0]['meta']['operationId']);
+        self::assertSame('rawArticlesGet', $contracts[1]['meta']['operationId']);
     }
 
     public function testRequiresFieldsForTableResource(): void

@@ -43,8 +43,8 @@ composer cs-check
 - M1 done: router, dispatcher bridge, middleware pipeline, response/error normalization.
 - M2 done: CPT resource list/get with strict query contract.
 - M3 done: custom table resource list/get with allowlist + prepared statement adapter.
-- After M3: separate smoke host plugin under
-  - `/home/idp/webapps/app-idp/wp-content/plugins/better-route`
+- M4 done: contract freeze + route/resource meta model + contract extraction API.
+- Smoke host plugin: `/home/idp/webapps/app-idp/wp-content/plugins/better-route`
 
 ## Minimal usage
 
@@ -92,3 +92,4 @@ add_action('rest_api_init', function () {
 ## Documentation
 
 - Architecture and milestones: `DEVELOPMENT_BLUEPRINT.md`
+- Stable contract and breaking checklist: `CONTRACT.md`

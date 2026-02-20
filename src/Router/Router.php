@@ -110,6 +110,37 @@ final class Router
         return sprintf('%s/%s', trim($this->vendor, '/'), trim($this->version, '/'));
     }
 
+    /**
+     * @return list<array{
+     *   namespace: string,
+     *   method: string,
+     *   path: string,
+     *   args: array<string, mixed>,
+     *   meta: array<string, mixed>
+     * }>
+     */
+    public function contracts(bool $openApiOnly = false): array
+    {
+        $contracts = [];
+
+        foreach ($this->routes as $route) {
+            $includeInOpenApi = (bool) ($route->meta['openapi']['include'] ?? true);
+            if ($openApiOnly && !$includeInOpenApi) {
+                continue;
+            }
+
+            $contracts[] = [
+                'namespace' => $this->baseNamespace(),
+                'method' => $route->method,
+                'path' => $route->uri,
+                'args' => $route->args,
+                'meta' => $route->meta,
+            ];
+        }
+
+        return $contracts;
+    }
+
     public function register(?DispatcherInterface $dispatcher = null): void
     {
         $dispatcher ??= new WordPressRestDispatcher();
@@ -153,7 +184,10 @@ final class Router
             throw new InvalidArgumentException('Invalid route index.');
         }
 
-        $this->routes[$routeIndex] = $route->withMeta(array_merge($route->meta, $meta));
+        $merged = array_merge($route->meta, $meta);
+        $this->routes[$routeIndex] = $route->withMeta(
+            RouteMeta::normalize($merged, $route->method, $route->uri)
+        );
     }
 
     /**
@@ -185,11 +219,15 @@ final class Router
 
     private function map(string $method, string $uri, mixed $handler): RouteBuilder
     {
+        $normalizedMethod = strtoupper($method);
+        $normalizedUri = $this->normalizeUri($this->currentGroupPrefix() . '/' . trim($uri, '/'));
+
         $this->routes[] = new RouteDefinition(
-            method: strtoupper($method),
-            uri: $this->normalizeUri($this->currentGroupPrefix() . '/' . trim($uri, '/')),
+            method: $normalizedMethod,
+            uri: $normalizedUri,
             handler: $handler,
-            middlewares: $this->currentMiddlewares()
+            middlewares: $this->currentMiddlewares(),
+            meta: RouteMeta::normalize([], $normalizedMethod, $normalizedUri)
         );
 
         $index = array_key_last($this->routes);

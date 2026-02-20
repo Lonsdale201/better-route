@@ -35,6 +35,9 @@ final class ResourceCptRegistrationTest extends TestCase
 
         self::assertSame('/articles', $list['route']->uri);
         self::assertSame('/articles/(?P<id>\d+)', $get['route']->uri);
+        self::assertSame('articlesList', $list['route']->meta['operationId']);
+        self::assertSame('articlesGet', $get['route']->meta['operationId']);
+        self::assertSame(['Articles'], $list['route']->meta['tags']);
 
         $listResponse = ($list['callback'])(new ResourceFakeRequest([
             'fields' => 'id,title',
@@ -51,6 +54,26 @@ final class ResourceCptRegistrationTest extends TestCase
         $getResponse = ($get['callback'])(new ResourceFakeRequest(['id' => '1']));
         self::assertSame(200, $getResponse['status']);
         self::assertSame(1, $getResponse['body']['id']);
+    }
+
+    public function testResourceExposesContracts(): void
+    {
+        $resource = Resource::make('articles')
+            ->restNamespace('better-route/v1')
+            ->sourceCpt('post')
+            ->allow(['list', 'get'])
+            ->fields(['id', 'title'])
+            ->filters(['status'])
+            ->sort(['date', 'id'])
+            ->usingCptRepository(new ArrayCptRepository());
+
+        $resource->register(new ResourceDispatcher());
+        $contracts = $resource->contracts(true);
+
+        self::assertCount(2, $contracts);
+        self::assertSame('articlesList', $contracts[0]['meta']['operationId']);
+        self::assertSame('articlesGet', $contracts[1]['meta']['operationId']);
+        self::assertTrue($contracts[0]['meta']['openapi']['include']);
     }
 
     public function testGetReturnsNotFoundErrorShape(): void
