@@ -38,7 +38,7 @@ For local development (path repository + symlink):
     {
       "type": "path",
       "url": "../../../libraries/better-route",
-      "options": {"symlink": true}
+      "options": { "symlink": true }
     }
   ]
 }
@@ -173,6 +173,49 @@ add_action('rest_api_init', function () {
 - `BetterRoute\Observability\AuditEventFactory`
 - `BetterRoute\Observability\PrometheusMetricSink`
 
+## OpenAPI (MVP)
+
+The library already stores route/resource metadata for OpenAPI.  
+You can export a document from contracts and optionally expose it as a REST endpoint.
+
+### Manual export from contracts
+
+```php
+use BetterRoute\OpenApi\OpenApiExporter;
+
+$contracts = array_merge(
+    $router->contracts(true),
+    $articlesResource->contracts(true)
+);
+
+$openApi = (new OpenApiExporter())->export($contracts, [
+    'title' => 'better-route API',
+    'version' => 'v0.1.0',
+    'serverUrl' => '/wp-json',
+]);
+```
+
+### Register `openapi.json` endpoint
+
+```php
+use BetterRoute\OpenApi\OpenApiRouteRegistrar;
+
+OpenApiRouteRegistrar::register(
+    restNamespace: 'better-route/v1',
+    contractsProvider: static fn (): array => OpenApiRouteRegistrar::contractsFromSources([
+        $router,
+        $articlesResource,
+    ]),
+    options: [
+        'title' => 'better-route API',
+        'version' => 'v0.1.0',
+        'serverUrl' => '/wp-json',
+    ]
+);
+```
+
+Result endpoint: `GET /wp-json/better-route/v1/openapi.json`
+
 ## Error Contract
 
 ```json
@@ -200,4 +243,4 @@ composer cs-check
 
 ## Current Status
 
-Active development. Core features are implemented and smoke-tested in a WP host plugin.
+Active development.
