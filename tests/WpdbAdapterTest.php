@@ -58,6 +58,42 @@ final class WpdbAdapterTest extends TestCase
         );
     }
 
+    public function testCreateUpdateDeleteWorkWithPreparedQueries(): void
+    {
+        $fakeWpdb = new FakeWpdbClient();
+        $fakeWpdb->insert_id = 10;
+        $fakeWpdb->results = [['id' => 10, 'title' => 'Created']];
+        $GLOBALS['wpdb'] = $fakeWpdb;
+
+        $adapter = new WpdbAdapter();
+        $created = $adapter->create(
+            table: 'ai_raw_articles',
+            primaryKey: 'id',
+            payload: ['title' => 'Created'],
+            fields: ['id', 'title']
+        );
+
+        self::assertSame(10, $created['id']);
+        self::assertNotEmpty($fakeWpdb->queryCalls);
+
+        $fakeWpdb->results = [['id' => 10, 'title' => 'Updated']];
+        $updated = $adapter->update(
+            table: 'ai_raw_articles',
+            primaryKey: 'id',
+            id: 10,
+            payload: ['title' => 'Updated'],
+            fields: ['id', 'title']
+        );
+        self::assertSame('Updated', $updated['title']);
+
+        $deleted = $adapter->delete(
+            table: 'ai_raw_articles',
+            primaryKey: 'id',
+            id: 10
+        );
+        self::assertTrue($deleted);
+    }
+
     protected function tearDown(): void
     {
         unset($GLOBALS['wpdb']);
@@ -67,9 +103,13 @@ final class WpdbAdapterTest extends TestCase
 final class FakeWpdbClient implements WpdbClient
 {
     public string $prefix = 'wp_';
+    public int $insert_id = 0;
 
     /** @var list<array{query: string, args: list<mixed>}> */
     public array $preparedCalls = [];
+
+    /** @var list<mixed> */
+    public array $queryCalls = [];
 
     /** @var list<array<string, mixed>> */
     public array $results = [];
@@ -96,6 +136,10 @@ final class FakeWpdbClient implements WpdbClient
 
     public function get_var(mixed $query): int
     {
+        if (is_string($query) && stripos($query, 'LAST_INSERT_ID') !== false) {
+            return $this->insert_id;
+        }
+
         return $this->count;
     }
 
@@ -105,5 +149,11 @@ final class FakeWpdbClient implements WpdbClient
     public function get_row(mixed $query, mixed $output = null): ?array
     {
         return $this->results[0] ?? null;
+    }
+
+    public function query(mixed $query): int
+    {
+        $this->queryCalls[] = $query;
+        return 1;
     }
 }

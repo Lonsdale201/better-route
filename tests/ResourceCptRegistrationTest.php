@@ -158,6 +158,95 @@ final class ResourceCptRegistrationTest extends TestCase
         self::assertSame(200, $response['status']);
         self::assertSame(1, $response['body']['data']['id']);
     }
+
+    public function testRegistersCrudRoutesForCpt(): void
+    {
+        $dispatcher = new ResourceDispatcher();
+        Resource::make('articles')
+            ->restNamespace('better-route/v1')
+            ->sourceCpt('post')
+            ->allow(['create', 'update', 'delete'])
+            ->fields(['id', 'title'])
+            ->usingCptRepository(new ArrayCptRepository())
+            ->register($dispatcher);
+
+        self::assertCount(4, $dispatcher->registrations);
+        self::assertSame('POST', $dispatcher->registrations[0]['route']->method);
+        self::assertSame('PUT', $dispatcher->registrations[1]['route']->method);
+        self::assertSame('PATCH', $dispatcher->registrations[2]['route']->method);
+        self::assertSame('DELETE', $dispatcher->registrations[3]['route']->method);
+    }
+
+    public function testCreateAndDeleteFlowForCpt(): void
+    {
+        $dispatcher = new ResourceDispatcher();
+        $repository = new ArrayCptRepository();
+
+        Resource::make('articles')
+            ->restNamespace('better-route/v1')
+            ->sourceCpt('post')
+            ->allow(['create', 'delete'])
+            ->fields(['id', 'title'])
+            ->usingCptRepository($repository)
+            ->register($dispatcher);
+
+        $create = ($dispatcher->registrations[0]['callback'])(new ResourceFakeRequest(['title' => 'New']));
+        self::assertSame(201, $create['status']);
+        self::assertSame('New', $create['body']['data']['title']);
+
+        $delete = ($dispatcher->registrations[1]['callback'])(new ResourceFakeRequest(['id' => '1']));
+        self::assertSame(200, $delete['status']);
+        self::assertTrue($delete['body']['data']['deleted']);
+    }
+
+    public function testCptVisibilityPolicyHidesDraftByDefault(): void
+    {
+        $dispatcher = new ResourceDispatcher();
+        $repository = new ArrayCptRepository();
+        $repository->item = [
+            'id' => 1,
+            'title' => 'Draft article',
+            'status' => 'draft',
+        ];
+
+        Resource::make('articles')
+            ->restNamespace('better-route/v1')
+            ->sourceCpt('post')
+            ->allow(['list', 'get'])
+            ->fields(['id', 'title', 'status'])
+            ->filters(['status'])
+            ->usingCptRepository($repository)
+            ->register($dispatcher);
+
+        $listResponse = ($dispatcher->registrations[0]['callback'])(new ResourceFakeRequest([]));
+        self::assertSame(200, $listResponse['status']);
+        self::assertSame([], $listResponse['body']['data']);
+
+        $getResponse = ($dispatcher->registrations[1]['callback'])(new ResourceFakeRequest(['id' => '1']));
+        self::assertSame(404, $getResponse['status']);
+        self::assertSame('not_found', $getResponse['body']['error']['code']);
+    }
+
+    public function testRegistersPermissionCallbackFromPolicy(): void
+    {
+        $dispatcher = new ResourceDispatcher();
+
+        Resource::make('articles')
+            ->restNamespace('better-route/v1')
+            ->sourceCpt('post')
+            ->allow(['list'])
+            ->fields(['id', 'title'])
+            ->policy([
+                'permissions' => [
+                    'list' => static fn (): bool => false,
+                ],
+            ])
+            ->usingCptRepository(new ArrayCptRepository())
+            ->register($dispatcher);
+
+        $permission = $dispatcher->registrations[0]['permissionCallback'];
+        self::assertFalse((bool) $permission(new ResourceFakeRequest([])));
+    }
 }
 
 final class ResourceDispatcher implements DispatcherInterface
@@ -202,6 +291,22 @@ final class ResourceFakeRequest
         return $this->params[$name] ?? null;
     }
 
+    /**
+     * @return array<string, mixed>
+     */
+    public function get_json_params(): array
+    {
+        return $this->params;
+    }
+
+    /**
+     * @return array<string, mixed>
+     */
+    public function get_body_params(): array
+    {
+        return $this->params;
+    }
+
     public function get_header(string $name): string
     {
         return strtolower($name) === 'x-request-id' ? 'req_resource_test' : '';
@@ -242,5 +347,35 @@ final class ArrayCptRepository implements CptRepositoryInterface
         }
 
         return $row;
+    }
+
+    public function create(string $postType, array $payload, array $fields): array
+    {
+        $this->item = array_merge($this->item ?? [], $payload);
+        $this->item['id'] = $this->item['id'] ?? 1;
+
+        return $this->get($postType, (int) $this->item['id'], $fields) ?? [];
+    }
+
+    public function update(string $postType, int $id, array $payload, array $fields): ?array
+    {
+        if ($this->item === null) {
+            return null;
+        }
+
+        $this->item = array_merge($this->item, $payload);
+        $this->item['id'] = $id;
+
+        return $this->get($postType, $id, $fields);
+    }
+
+    public function delete(string $postType, int $id): bool
+    {
+        if ($this->item === null) {
+            return false;
+        }
+
+        $this->item = null;
+        return true;
     }
 }

@@ -144,6 +144,93 @@ final class ResourceTableRegistrationTest extends TestCase
         self::assertSame(200, $response['status']);
         self::assertSame(1, $response['body']['data']['id']);
     }
+
+    public function testRegistersCrudRoutesForTable(): void
+    {
+        $dispatcher = new TableResourceDispatcher();
+        Resource::make('raw-articles')
+            ->restNamespace('better-route/v1')
+            ->sourceTable('ai_raw_articles', 'id')
+            ->allow(['create', 'update', 'delete'])
+            ->fields(['id', 'title'])
+            ->usingTableRepository(new ArrayTableRepository())
+            ->register($dispatcher);
+
+        self::assertCount(4, $dispatcher->registrations);
+        self::assertSame('POST', $dispatcher->registrations[0]['route']->method);
+        self::assertSame('PUT', $dispatcher->registrations[1]['route']->method);
+        self::assertSame('PATCH', $dispatcher->registrations[2]['route']->method);
+        self::assertSame('DELETE', $dispatcher->registrations[3]['route']->method);
+    }
+
+    public function testCreateAndDeleteFlowForTable(): void
+    {
+        $dispatcher = new TableResourceDispatcher();
+        Resource::make('raw-articles')
+            ->restNamespace('better-route/v1')
+            ->sourceTable('ai_raw_articles', 'id')
+            ->allow(['create', 'delete'])
+            ->fields(['id', 'title'])
+            ->usingTableRepository(new ArrayTableRepository())
+            ->register($dispatcher);
+
+        $create = ($dispatcher->registrations[0]['callback'])(new TableResourceFakeRequest(['title' => 'Row X']));
+        self::assertSame(201, $create['status']);
+        self::assertSame('Row X', $create['body']['data']['title']);
+
+        $delete = ($dispatcher->registrations[1]['callback'])(new TableResourceFakeRequest(['id' => '1']));
+        self::assertSame(200, $delete['status']);
+        self::assertTrue($delete['body']['data']['deleted']);
+    }
+
+    public function testTableResourceUsesFilterSchemaTypeCoercion(): void
+    {
+        $repository = new ArrayTableRepository();
+        $dispatcher = new TableResourceDispatcher();
+
+        Resource::make('raw-articles')
+            ->restNamespace('better-route/v1')
+            ->sourceTable('ai_raw_articles', 'id')
+            ->allow(['list'])
+            ->fields(['id', 'title'])
+            ->filters(['source_id', 'published'])
+            ->filterSchema([
+                'source_id' => 'int',
+                'published' => 'bool',
+            ])
+            ->usingTableRepository($repository)
+            ->register($dispatcher);
+
+        ($dispatcher->registrations[0]['callback'])(new TableResourceFakeRequest([
+            'source_id' => '12',
+            'published' => 'true',
+        ]));
+
+        self::assertNotNull($repository->lastListQuery);
+        self::assertSame(12, $repository->lastListQuery->filters['source_id']);
+        self::assertTrue($repository->lastListQuery->filters['published']);
+    }
+
+    public function testTableResourceRegistersPermissionCallbackFromPolicy(): void
+    {
+        $dispatcher = new TableResourceDispatcher();
+
+        Resource::make('raw-articles')
+            ->restNamespace('better-route/v1')
+            ->sourceTable('ai_raw_articles', 'id')
+            ->allow(['list'])
+            ->fields(['id', 'title'])
+            ->policy([
+                'permissions' => [
+                    'list' => static fn (): bool => false,
+                ],
+            ])
+            ->usingTableRepository(new ArrayTableRepository())
+            ->register($dispatcher);
+
+        $permission = $dispatcher->registrations[0]['permissionCallback'];
+        self::assertFalse((bool) $permission(new TableResourceFakeRequest([])));
+    }
 }
 
 final class TableResourceDispatcher implements DispatcherInterface
@@ -188,6 +275,22 @@ final class TableResourceFakeRequest
         return $this->params[$name] ?? null;
     }
 
+    /**
+     * @return array<string, mixed>
+     */
+    public function get_json_params(): array
+    {
+        return $this->params;
+    }
+
+    /**
+     * @return array<string, mixed>
+     */
+    public function get_body_params(): array
+    {
+        return $this->params;
+    }
+
     public function get_header(string $name): string
     {
         return strtolower($name) === 'x-request-id' ? 'req_table_resource_test' : '';
@@ -229,5 +332,35 @@ final class ArrayTableRepository implements TableRepositoryInterface
         }
 
         return $row;
+    }
+
+    public function create(string $table, string $primaryKey, array $payload, array $fields): array
+    {
+        $this->item = array_merge($this->item ?? [], $payload);
+        $this->item[$primaryKey] = $this->item[$primaryKey] ?? 1;
+
+        return $this->get($table, $primaryKey, (int) $this->item[$primaryKey], $fields) ?? [];
+    }
+
+    public function update(string $table, string $primaryKey, int $id, array $payload, array $fields): ?array
+    {
+        if ($this->item === null) {
+            return null;
+        }
+
+        $this->item = array_merge($this->item, $payload);
+        $this->item[$primaryKey] = $id;
+
+        return $this->get($table, $primaryKey, $id, $fields);
+    }
+
+    public function delete(string $table, string $primaryKey, int $id): bool
+    {
+        if ($this->item === null) {
+            return false;
+        }
+
+        $this->item = null;
+        return true;
     }
 }

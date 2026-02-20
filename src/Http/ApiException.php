@@ -6,7 +6,7 @@ namespace BetterRoute\Http;
 
 use RuntimeException;
 
-final class ApiException extends RuntimeException
+class ApiException extends RuntimeException
 {
     /**
      * @param array<string, mixed> $details

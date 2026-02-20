@@ -9,9 +9,6 @@ use BetterRoute\Http\Response;
 use BetterRoute\Http\ResponseNormalizer;
 use BetterRoute\Middleware\Pipeline;
 use InvalidArgumentException;
-use ReflectionFunction;
-use ReflectionMethod;
-use ReflectionNamedType;
 use Throwable;
 
 final class Router
@@ -32,7 +29,8 @@ final class Router
         private readonly string $vendor,
         private readonly string $version,
         private readonly Pipeline $pipeline = new Pipeline(),
-        private readonly ResponseNormalizer $responseNormalizer = new ResponseNormalizer()
+        private readonly ResponseNormalizer $responseNormalizer = new ResponseNormalizer(),
+        private readonly ArgumentResolver $argumentResolver = new ArgumentResolver()
     ) {
     }
 
@@ -282,7 +280,7 @@ final class Router
             $result = $this->pipeline->process(
                 context: $context,
                 middlewares: $route->middlewares,
-                destination: fn (RequestContext $ctx): mixed => $this->invokeHandler($route->handler, $ctx, $request)
+                destination: fn (RequestContext $ctx): mixed => $this->argumentResolver->invoke($route->handler, $ctx, $request)
             );
 
             $normalized = $this->responseNormalizer->normalize($result, $context);
@@ -291,67 +289,6 @@ final class Router
         }
 
         return $this->toWpResponse($normalized);
-    }
-
-    private function invokeHandler(mixed $handler, RequestContext $context, mixed $request): mixed
-    {
-        $callable = $this->resolveCallableHandler($handler);
-        $reflection = $this->reflectCallable($callable);
-        $parameters = $reflection->getParameters();
-        $count = count($parameters);
-
-        if ($count === 0) {
-            return $callable();
-        }
-
-        if ($count === 1) {
-            $type = $parameters[0]->getType();
-            if ($type instanceof ReflectionNamedType && $type->getName() === RequestContext::class) {
-                return $callable($context);
-            }
-
-            return $callable($request);
-        }
-
-        return $callable($context, $request);
-    }
-
-    private function resolveCallableHandler(mixed $handler): callable
-    {
-        if (is_array($handler) && count($handler) === 2 && is_string($handler[0]) && is_string($handler[1])) {
-            $className = $handler[0];
-            $method = $handler[1];
-            $instance = new $className();
-            if (is_callable([$instance, $method])) {
-                return [$instance, $method];
-            }
-        }
-
-        if (is_string($handler) && class_exists($handler)) {
-            $instance = new $handler();
-            if (is_callable($instance)) {
-                return $instance;
-            }
-        }
-
-        if (is_callable($handler)) {
-            return $handler;
-        }
-
-        throw new InvalidArgumentException('Route handler must be callable.');
-    }
-
-    private function reflectCallable(callable $callable): ReflectionFunction|ReflectionMethod
-    {
-        if (is_array($callable)) {
-            return new ReflectionMethod($callable[0], (string) $callable[1]);
-        }
-
-        if (is_object($callable) && !$callable instanceof \Closure) {
-            return new ReflectionMethod($callable, '__invoke');
-        }
-
-        return new ReflectionFunction(\Closure::fromCallable($callable));
     }
 
     private function toWpResponse(mixed $normalized): mixed

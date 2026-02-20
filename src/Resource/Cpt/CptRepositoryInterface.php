@@ -21,4 +21,20 @@ interface CptRepositoryInterface
      * @return array<string, mixed>|null
      */
     public function get(string $postType, int $id, array $fields): ?array;
+
+    /**
+     * @param array<string, mixed> $payload
+     * @param list<string> $fields
+     * @return array<string, mixed>
+     */
+    public function create(string $postType, array $payload, array $fields): array;
+
+    /**
+     * @param array<string, mixed> $payload
+     * @param list<string> $fields
+     * @return array<string, mixed>|null
+     */
+    public function update(string $postType, int $id, array $payload, array $fields): ?array;
+
+    public function delete(string $postType, int $id): bool;
 }
