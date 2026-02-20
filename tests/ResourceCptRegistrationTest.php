@@ -123,6 +123,41 @@ final class ResourceCptRegistrationTest extends TestCase
         self::assertSame(400, $response['status']);
         self::assertSame('validation_failed', $response['body']['error']['code']);
     }
+
+    public function testCustomMaxPerPageIsEnforced(): void
+    {
+        $dispatcher = new ResourceDispatcher();
+        Resource::make('articles')
+            ->restNamespace('better-route/v1')
+            ->sourceCpt('post')
+            ->allow(['list'])
+            ->fields(['id'])
+            ->defaultPerPage(2)
+            ->maxPerPage(2)
+            ->usingCptRepository(new ArrayCptRepository())
+            ->register($dispatcher);
+
+        $response = ($dispatcher->registrations[0]['callback'])(new ResourceFakeRequest(['per_page' => '3']));
+        self::assertSame(400, $response['status']);
+        self::assertSame('validation_failed', $response['body']['error']['code']);
+    }
+
+    public function testGetCanReturnUniformEnvelope(): void
+    {
+        $dispatcher = new ResourceDispatcher();
+        Resource::make('articles')
+            ->restNamespace('better-route/v1')
+            ->sourceCpt('post')
+            ->allow(['get'])
+            ->fields(['id', 'title'])
+            ->uniformEnvelope()
+            ->usingCptRepository(new ArrayCptRepository())
+            ->register($dispatcher);
+
+        $response = ($dispatcher->registrations[0]['callback'])(new ResourceFakeRequest(['id' => '1']));
+        self::assertSame(200, $response['status']);
+        self::assertSame(1, $response['body']['data']['id']);
+    }
 }
 
 final class ResourceDispatcher implements DispatcherInterface

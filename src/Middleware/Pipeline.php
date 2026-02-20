@@ -6,9 +6,22 @@ namespace BetterRoute\Middleware;
 
 use BetterRoute\Http\RequestContext;
 use InvalidArgumentException;
+use ReflectionClass;
 
 final class Pipeline
 {
+    /** @var null|callable(string): mixed */
+    private $middlewareFactory = null;
+
+    /**
+     * @param callable(string): mixed $factory
+     */
+    public function withMiddlewareFactory(callable $factory): self
+    {
+        $this->middlewareFactory = $factory;
+        return $this;
+    }
+
     /**
      * @param list<mixed> $middlewares
      */
@@ -32,9 +45,36 @@ final class Pipeline
         }
 
         if (is_string($middleware) && class_exists($middleware)) {
+            if ($this->middlewareFactory !== null) {
+                $resolved = ($this->middlewareFactory)($middleware);
+
+                if ($resolved instanceof MiddlewareInterface) {
+                    return [$resolved, 'handle'];
+                }
+
+                if (is_callable($resolved)) {
+                    return $resolved;
+                }
+            }
+
+            $reflection = new ReflectionClass($middleware);
+            $constructor = $reflection->getConstructor();
+            if ($constructor !== null && $constructor->getNumberOfRequiredParameters() > 0) {
+                throw new InvalidArgumentException(
+                    sprintf(
+                        'Middleware "%s" requires constructor arguments. Configure router middlewareFactory().',
+                        $middleware
+                    )
+                );
+            }
+
             $instance = new $middleware();
             if ($instance instanceof MiddlewareInterface) {
                 return [$instance, 'handle'];
+            }
+
+            if (is_callable($instance)) {
+                return $instance;
             }
         }
 

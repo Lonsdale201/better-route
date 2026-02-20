@@ -81,6 +81,19 @@ final class ResourceTableRegistrationTest extends TestCase
             ->register(new TableResourceDispatcher());
     }
 
+    public function testInvalidPaginationConfigurationThrows(): void
+    {
+        $this->expectException(\InvalidArgumentException::class);
+
+        Resource::make('raw-articles')
+            ->restNamespace('better-route/v1')
+            ->sourceTable('ai_raw_articles', 'id')
+            ->allow(['list'])
+            ->fields(['id'])
+            ->defaultPerPage(50)
+            ->maxPerPage(10);
+    }
+
     public function testReturnsValidationErrorForUnknownQueryParams(): void
     {
         $dispatcher = new TableResourceDispatcher();
@@ -95,6 +108,41 @@ final class ResourceTableRegistrationTest extends TestCase
         $response = ($dispatcher->registrations[0]['callback'])(new TableResourceFakeRequest(['foo' => 'bar']));
         self::assertSame(400, $response['status']);
         self::assertSame('validation_failed', $response['body']['error']['code']);
+    }
+
+    public function testTableResourceMaxPerPageIsEnforced(): void
+    {
+        $dispatcher = new TableResourceDispatcher();
+        Resource::make('raw-articles')
+            ->restNamespace('better-route/v1')
+            ->sourceTable('ai_raw_articles', 'id')
+            ->allow(['list'])
+            ->fields(['id', 'title'])
+            ->defaultPerPage(2)
+            ->maxPerPage(2)
+            ->usingTableRepository(new ArrayTableRepository())
+            ->register($dispatcher);
+
+        $response = ($dispatcher->registrations[0]['callback'])(new TableResourceFakeRequest(['per_page' => '3']));
+        self::assertSame(400, $response['status']);
+        self::assertSame('validation_failed', $response['body']['error']['code']);
+    }
+
+    public function testTableGetCanReturnUniformEnvelope(): void
+    {
+        $dispatcher = new TableResourceDispatcher();
+        Resource::make('raw-articles')
+            ->restNamespace('better-route/v1')
+            ->sourceTable('ai_raw_articles', 'id')
+            ->allow(['get'])
+            ->fields(['id', 'title'])
+            ->uniformEnvelope()
+            ->usingTableRepository(new ArrayTableRepository())
+            ->register($dispatcher);
+
+        $response = ($dispatcher->registrations[0]['callback'])(new TableResourceFakeRequest(['id' => '1']));
+        self::assertSame(200, $response['status']);
+        self::assertSame(1, $response['body']['data']['id']);
     }
 }
 

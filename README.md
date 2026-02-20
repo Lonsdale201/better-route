@@ -44,6 +44,7 @@ composer cs-check
 - M2 done: CPT resource list/get with strict query contract.
 - M3 done: custom table resource list/get with allowlist + prepared statement adapter.
 - M4 done: contract freeze + route/resource meta model + contract extraction API.
+- Post-M4 hardening: middleware factory hook, configurable pagination caps, optional uniform success envelope.
 - Smoke host plugin: `/home/idp/webapps/app-idp/wp-content/plugins/better-route`
 
 ## Minimal usage
@@ -85,11 +86,36 @@ add_action('rest_api_init', function () {
         ->fields(['id', 'source', 'title', 'created_at'])
         ->filters(['source'])
         ->sort(['id', 'created_at'])
+        ->defaultPerPage(20)
+        ->maxPerPage(100)
+        ->uniformEnvelope(false)
         ->register();
 });
 ```
 
+## Configuration highlights
+
+1. Middleware DI/factory:
+
+```php
+$router = Router::make('better-route', 'v1')
+    ->middlewareFactory(function (string $middlewareClass): mixed {
+        if ($middlewareClass === JwtAuthMiddleware::class) {
+            return new JwtAuthMiddleware($jwtVerifier, $userMapper);
+        }
+
+        return null;
+    });
+```
+
+2. Pagination policy per resource:
+- `defaultPerPage(int)`
+- `maxPerPage(int)`
+
+3. Success payload style for `get` endpoints:
+- default: raw object
+- `uniformEnvelope(true)`: `{ "data": { ... } }`
+
 ## Documentation
 
-- Architecture and milestones: `DEVELOPMENT_BLUEPRINT.md`
-- Stable contract and breaking checklist: `CONTRACT.md`
+This `README.md` is the canonical public documentation of the library.

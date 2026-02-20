@@ -38,6 +38,9 @@ final class Resource
     private ?string $primaryKey = null;
     private ?CptRepositoryInterface $cptRepository = null;
     private ?TableRepositoryInterface $tableRepository = null;
+    private int $defaultPerPage = 20;
+    private int $maxPerPage = 100;
+    private bool $uniformEnvelope = false;
 
     /** @var list<array{
      *   namespace: string,
@@ -135,6 +138,26 @@ final class Resource
         return $this;
     }
 
+    public function defaultPerPage(int $defaultPerPage): self
+    {
+        $this->defaultPerPage = $defaultPerPage;
+        $this->assertPaginationConfiguration();
+        return $this;
+    }
+
+    public function maxPerPage(int $maxPerPage): self
+    {
+        $this->maxPerPage = $maxPerPage;
+        $this->assertPaginationConfiguration();
+        return $this;
+    }
+
+    public function uniformEnvelope(bool $enabled = true): self
+    {
+        $this->uniformEnvelope = $enabled;
+        return $this;
+    }
+
     public function register(?DispatcherInterface $dispatcher = null): void
     {
         if ($this->sourceCpt !== null) {
@@ -161,7 +184,10 @@ final class Resource
      *   fields: list<string>,
      *   filters: list<string>,
      *   sort: list<string>,
-     *   policy: array<string, mixed>
+     *   policy: array<string, mixed>,
+     *   defaultPerPage: int,
+     *   maxPerPage: int,
+     *   uniformEnvelope: bool
      * }
      */
     public function descriptor(): array
@@ -177,6 +203,9 @@ final class Resource
             'filters' => $this->filters,
             'sort' => $this->sort,
             'policy' => $this->policy,
+            'defaultPerPage' => $this->defaultPerPage,
+            'maxPerPage' => $this->maxPerPage,
+            'uniformEnvelope' => $this->uniformEnvelope,
         ];
     }
 
@@ -208,13 +237,17 @@ final class Resource
 
     private function registerCpt(?DispatcherInterface $dispatcher): void
     {
+        $this->assertPaginationConfiguration();
+
         $namespace = $this->parseRestNamespace($this->requireString($this->restNamespace, 'restNamespace is required.'));
         $router = Router::make($namespace['vendor'], $namespace['version']);
         $repository = $this->cptRepository ?? new WordPressCptRepository();
         $queryParser = new CptListQueryParser(
             allowedFields: $this->fields !== [] ? $this->fields : ['id', 'title', 'slug', 'excerpt', 'date', 'status'],
             allowedFilters: $this->filters,
-            allowedSort: $this->sort !== [] ? $this->sort : ['date', 'id']
+            allowedSort: $this->sort !== [] ? $this->sort : ['date', 'id'],
+            defaultPerPage: $this->defaultPerPage,
+            maxPerPage: $this->maxPerPage
         );
         $postType = $this->requireString($this->sourceCpt, 'sourceCpt is required.');
         $allowed = $this->allowedActions !== [] ? $this->allowedActions : ['list', 'get'];
@@ -250,6 +283,10 @@ final class Resource
                     throw new ApiException('Resource not found.', 404, 'not_found');
                 }
 
+                if ($this->uniformEnvelope) {
+                    return ['data' => $item];
+                }
+
                 return $item;
             })->args([
                 'id' => [
@@ -274,6 +311,8 @@ final class Resource
 
     private function registerTable(?DispatcherInterface $dispatcher): void
     {
+        $this->assertPaginationConfiguration();
+
         $namespace = $this->parseRestNamespace($this->requireString($this->restNamespace, 'restNamespace is required.'));
         $router = Router::make($namespace['vendor'], $namespace['version']);
         $repository = $this->tableRepository ?? new WordPressTableRepository();
@@ -287,7 +326,9 @@ final class Resource
         $queryParser = new TableListQueryParser(
             allowedFields: $fields,
             allowedFilters: $this->filters,
-            allowedSort: $this->sort !== [] ? $this->sort : [$primaryKey]
+            allowedSort: $this->sort !== [] ? $this->sort : [$primaryKey],
+            defaultPerPage: $this->defaultPerPage,
+            maxPerPage: $this->maxPerPage
         );
 
         $allowed = $this->allowedActions !== [] ? $this->allowedActions : ['list', 'get'];
@@ -320,6 +361,10 @@ final class Resource
 
                 if ($item === null) {
                     throw new ApiException('Resource not found.', 404, 'not_found');
+                }
+
+                if ($this->uniformEnvelope) {
+                    return ['data' => $item];
                 }
 
                 return $item;
@@ -466,6 +511,21 @@ final class Resource
         }
 
         return array_values($result);
+    }
+
+    private function assertPaginationConfiguration(): void
+    {
+        if ($this->defaultPerPage < 1) {
+            throw new InvalidArgumentException('defaultPerPage must be greater than 0.');
+        }
+
+        if ($this->maxPerPage < 1) {
+            throw new InvalidArgumentException('maxPerPage must be greater than 0.');
+        }
+
+        if ($this->maxPerPage < $this->defaultPerPage) {
+            throw new InvalidArgumentException('maxPerPage must be greater than or equal to defaultPerPage.');
+        }
     }
 
     private function readId(mixed $request): int

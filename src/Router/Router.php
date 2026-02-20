@@ -62,6 +62,15 @@ final class Router
         return $this;
     }
 
+    /**
+     * @param callable(string): mixed $factory
+     */
+    public function middlewareFactory(callable $factory): self
+    {
+        $this->pipeline->withMiddlewareFactory($factory);
+        return $this;
+    }
+
     public function group(string $prefix, callable $callback): self
     {
         $this->groupPrefixes[] = trim($prefix, '/');

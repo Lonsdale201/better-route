@@ -6,6 +6,7 @@ namespace BetterRoute\Tests;
 
 use BetterRoute\Http\RequestContext;
 use BetterRoute\Http\Response;
+use BetterRoute\Middleware\MiddlewareInterface;
 use BetterRoute\Router\DispatcherInterface;
 use BetterRoute\Router\RouteDefinition;
 use BetterRoute\Router\Router;
@@ -126,6 +127,33 @@ final class RouterPipelineTest extends TestCase
         self::assertSame('listItems', $registration['route']->meta['operationId']);
         self::assertFalse(($registration['permissionCallback'])());
     }
+
+    public function testMiddlewareFactoryResolvesConstructorDependencies(): void
+    {
+        $trace = [];
+
+        $router = Router::make('better-route', 'v1')
+            ->middlewareFactory(static function (string $class): mixed {
+                if ($class === PrefixMiddleware::class) {
+                    return new PrefixMiddleware('prefixed');
+                }
+
+                return null;
+            })
+            ->middleware([PrefixMiddleware::class]);
+
+        $router->get('/factory', static function (RequestContext $context) use (&$trace): array {
+            $trace[] = (string) ($context->attributes['prefix'] ?? '');
+            return ['ok' => true];
+        });
+
+        $dispatcher = new InMemoryDispatcher();
+        $router->register($dispatcher);
+        $response = ($dispatcher->registrations[0]['callback'])(new FakeRequest('req_test_4'));
+
+        self::assertSame(200, $response['status']);
+        self::assertSame(['prefixed'], $trace);
+    }
 }
 
 final class InMemoryDispatcher implements DispatcherInterface
@@ -157,5 +185,17 @@ final class FakeRequest
     public function get_header(string $name): string
     {
         return strtolower($name) === 'x-request-id' ? $this->requestId : '';
+    }
+}
+
+final class PrefixMiddleware implements MiddlewareInterface
+{
+    public function __construct(private readonly string $prefix)
+    {
+    }
+
+    public function handle(RequestContext $context, callable $next): mixed
+    {
+        return $next($context->withAttribute('prefix', $this->prefix));
     }
 }

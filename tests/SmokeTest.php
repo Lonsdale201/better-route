@@ -27,9 +27,15 @@ final class SmokeTest extends TestCase
             ->fields(['id', 'title'])
             ->filters(['status'])
             ->sort(['id'])
-            ->policy(['scopes' => ['content:read']]);
+            ->policy(['scopes' => ['content:read']])
+            ->defaultPerPage(15)
+            ->maxPerPage(60)
+            ->uniformEnvelope();
 
         self::assertSame('articles', $resource->name());
         self::assertSame('post', $resource->descriptor()['sourceCpt']);
+        self::assertSame(15, $resource->descriptor()['defaultPerPage']);
+        self::assertSame(60, $resource->descriptor()['maxPerPage']);
+        self::assertTrue($resource->descriptor()['uniformEnvelope']);
     }
 }
