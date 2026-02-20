@@ -38,6 +38,42 @@ composer cs-check
 }
 ```
 
+## Current scope
+
+- M1 done: router, dispatcher bridge, middleware pipeline, response/error normalization.
+- M2 in progress: CPT resource list/get with strict query contract.
+- M3 target: custom table resource list/get.
+- After M3: separate smoke host plugin under
+  - `/home/idp/webapps/app-idp/wp-content/plugins/better-route`
+
+## Minimal usage
+
+```php
+use BetterRoute\Router\Router;
+
+add_action('rest_api_init', function () {
+    $router = Router::make('better-route', 'v1');
+    $router->get('/ping', fn () => ['pong' => true])
+        ->meta(['operationId' => 'ping']);
+    $router->register();
+});
+```
+
+```php
+use BetterRoute\Resource\Resource;
+
+add_action('rest_api_init', function () {
+    Resource::make('articles')
+        ->restNamespace('better-route/v1')
+        ->sourceCpt('post')
+        ->allow(['list', 'get'])
+        ->fields(['id', 'title', 'slug', 'excerpt', 'date', 'status'])
+        ->filters(['status', 'author', 'after', 'before'])
+        ->sort(['date', 'id'])
+        ->register();
+});
+```
+
 ## Documentation
 
 - Architecture and milestones: `DEVELOPMENT_BLUEPRINT.md`

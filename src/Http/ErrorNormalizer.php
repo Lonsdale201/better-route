@@ -10,10 +10,15 @@ final class ErrorNormalizer
 {
     public function fromThrowable(Throwable $throwable, string $requestId): Response
     {
-        $status = $throwable instanceof \InvalidArgumentException ? 400 : 500;
-        $code = is_string($throwable->getCode()) && $throwable->getCode() !== ''
-            ? $throwable->getCode()
+        $status = $throwable instanceof ApiException
+            ? $throwable->status()
+            : ($throwable instanceof \InvalidArgumentException ? 400 : 500);
+        $code = $throwable instanceof ApiException
+            ? $throwable->errorCode()
             : ($status === 400 ? 'invalid_request' : 'internal_error');
+        $details = $throwable instanceof ApiException
+            ? $throwable->details()
+            : ['exception' => $throwable::class];
 
         return new Response(
             body: [
@@ -21,9 +26,7 @@ final class ErrorNormalizer
                     'code' => $code,
                     'message' => $throwable->getMessage() !== '' ? $throwable->getMessage() : 'Unexpected error.',
                     'requestId' => $requestId,
-                    'details' => [
-                        'exception' => $throwable::class,
-                    ],
+                    'details' => $details,
                 ],
             ],
             status: $status
