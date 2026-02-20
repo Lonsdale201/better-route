@@ -41,8 +41,8 @@ composer cs-check
 ## Current scope
 
 - M1 done: router, dispatcher bridge, middleware pipeline, response/error normalization.
-- M2 in progress: CPT resource list/get with strict query contract.
-- M3 target: custom table resource list/get.
+- M2 done: CPT resource list/get with strict query contract.
+- M3 done: custom table resource list/get with allowlist + prepared statement adapter.
 - After M3: separate smoke host plugin under
   - `/home/idp/webapps/app-idp/wp-content/plugins/better-route`
 
@@ -70,6 +70,21 @@ add_action('rest_api_init', function () {
         ->fields(['id', 'title', 'slug', 'excerpt', 'date', 'status'])
         ->filters(['status', 'author', 'after', 'before'])
         ->sort(['date', 'id'])
+        ->register();
+});
+```
+
+```php
+use BetterRoute\Resource\Resource;
+
+add_action('rest_api_init', function () {
+    Resource::make('raw-articles')
+        ->restNamespace('better-route/v1')
+        ->sourceTable('ai_raw_articles', 'id')
+        ->allow(['list', 'get'])
+        ->fields(['id', 'source', 'title', 'created_at'])
+        ->filters(['source'])
+        ->sort(['id', 'created_at'])
         ->register();
 });
 ```

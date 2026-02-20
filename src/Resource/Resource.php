@@ -8,10 +8,12 @@ use BetterRoute\Http\ApiException;
 use BetterRoute\Resource\Cpt\CptListQueryParser;
 use BetterRoute\Resource\Cpt\CptRepositoryInterface;
 use BetterRoute\Resource\Cpt\WordPressCptRepository;
+use BetterRoute\Resource\Table\TableListQueryParser;
+use BetterRoute\Resource\Table\TableRepositoryInterface;
+use BetterRoute\Resource\Table\WordPressTableRepository;
 use BetterRoute\Router\DispatcherInterface;
 use BetterRoute\Router\Router;
 use InvalidArgumentException;
-use RuntimeException;
 
 final class Resource
 {
@@ -35,6 +37,7 @@ final class Resource
     private ?string $sourceTable = null;
     private ?string $primaryKey = null;
     private ?CptRepositoryInterface $cptRepository = null;
+    private ?TableRepositoryInterface $tableRepository = null;
 
     private function __construct(
         private readonly string $name
@@ -116,6 +119,12 @@ final class Resource
         return $this;
     }
 
+    public function usingTableRepository(TableRepositoryInterface $repository): self
+    {
+        $this->tableRepository = $repository;
+        return $this;
+    }
+
     public function register(?DispatcherInterface $dispatcher = null): void
     {
         if ($this->sourceCpt !== null) {
@@ -124,7 +133,8 @@ final class Resource
         }
 
         if ($this->sourceTable !== null) {
-            throw new RuntimeException('Custom table resources will be implemented in M3.');
+            $this->registerTable($dispatcher);
+            return;
         }
 
         throw new InvalidArgumentException('Resource source is required (sourceCpt or sourceTable).');
@@ -204,6 +214,72 @@ final class Resource
                 $id = $this->readId($request);
                 $fields = $this->fields !== [] ? $this->fields : ['id', 'title', 'slug', 'excerpt', 'date', 'status'];
                 $item = $repository->get($postType, $id, $fields);
+
+                if ($item === null) {
+                    throw new ApiException('Resource not found.', 404, 'not_found');
+                }
+
+                return $item;
+            })->args([
+                'id' => [
+                    'required' => true,
+                    'type' => 'integer',
+                ],
+            ])->meta([
+                'resource' => $this->name,
+                'action' => 'get',
+                'policy' => $this->policy,
+            ]);
+        }
+
+        $router->register($dispatcher);
+    }
+
+    private function registerTable(?DispatcherInterface $dispatcher): void
+    {
+        $namespace = $this->parseRestNamespace($this->requireString($this->restNamespace, 'restNamespace is required.'));
+        $router = Router::make($namespace['vendor'], $namespace['version']);
+        $repository = $this->tableRepository ?? new WordPressTableRepository();
+        $table = $this->requireString($this->sourceTable, 'sourceTable is required.');
+        $primaryKey = $this->requireString($this->primaryKey, 'primaryKey is required.');
+        $fields = $this->fields;
+        if ($fields === []) {
+            throw new InvalidArgumentException('fields are required for sourceTable resources.');
+        }
+
+        $queryParser = new TableListQueryParser(
+            allowedFields: $fields,
+            allowedFilters: $this->filters,
+            allowedSort: $this->sort !== [] ? $this->sort : [$primaryKey]
+        );
+
+        $allowed = $this->allowedActions !== [] ? $this->allowedActions : ['list', 'get'];
+
+        if (in_array('list', $allowed, true)) {
+            $router->get('/' . $this->name, function (mixed $request) use ($repository, $queryParser, $table, $primaryKey): array {
+                $query = $queryParser->parse($request);
+                $result = $repository->list($table, $primaryKey, $query);
+
+                return [
+                    'data' => $result['items'],
+                    'meta' => [
+                        'page' => $result['page'],
+                        'perPage' => $result['perPage'],
+                        'total' => $result['total'],
+                    ],
+                ];
+            })->args($this->listRouteArgs())
+                ->meta([
+                    'resource' => $this->name,
+                    'action' => 'list',
+                    'policy' => $this->policy,
+                ]);
+        }
+
+        if (in_array('get', $allowed, true)) {
+            $router->get('/' . $this->name . '/(?P<id>\d+)', function (mixed $request) use ($repository, $table, $primaryKey, $fields): array {
+                $id = $this->readId($request);
+                $item = $repository->get($table, $primaryKey, $id, $fields);
 
                 if ($item === null) {
                     throw new ApiException('Resource not found.', 404, 'not_found');
