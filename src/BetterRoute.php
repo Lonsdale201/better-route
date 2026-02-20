@@ -4,6 +4,7 @@ declare(strict_types=1);
 
 namespace BetterRoute;
 
+use BetterRoute\OpenApi\OpenApiExporter;
 use BetterRoute\Router\Router;
 
 final class BetterRoute
@@ -11,5 +12,10 @@ final class BetterRoute
     public static function router(string $vendor, string $version): Router
     {
         return Router::make($vendor, $version);
+    }
+
+    public static function openApiExporter(): OpenApiExporter
+    {
+        return new OpenApiExporter();
     }
 }
