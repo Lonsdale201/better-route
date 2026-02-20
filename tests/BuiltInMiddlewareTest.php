@@ -43,7 +43,7 @@ final class BuiltInMiddlewareTest extends TestCase
         $context = new RequestContext('req_jwt_2', '/secure', new MiddlewareRequest([]));
 
         $this->expectException(ApiException::class);
-        $middleware->handle($context, static fn (): null => null);
+        $middleware->handle($context, static fn () => null);
     }
 
     public function testRateLimitMiddlewareAddsHeaders(): void

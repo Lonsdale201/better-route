@@ -108,7 +108,7 @@ final class WriteSafetyMiddlewareTest extends TestCase
         );
 
         $this->expectException(PreconditionFailedException::class);
-        $middleware->handle($context, static fn (): null => null);
+        $middleware->handle($context, static fn () => null);
     }
 }
 
