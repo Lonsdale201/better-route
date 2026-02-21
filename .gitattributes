@@ -1,0 +1,10 @@
+/.github export-ignore
+/tests export-ignore
+/phpstan.neon export-ignore
+/phpunit.xml.dist export-ignore
+/.php-cs-fixer.php export-ignore
+/.php-cs-fixer.cache export-ignore
+/CONTRACT.md export-ignore
+/DEVELOPMENT_BLUEPRINT.md export-ignore
+/docs export-ignore
+/docs-site export-ignore
