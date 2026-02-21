@@ -27,24 +27,23 @@ Built for headless and integration-heavy projects where you want a stable, versi
 
 ## Install
 
-For local development (path repository + symlink):
+From public GitHub via Composer (`type: vcs`):
 
 ```json
 {
   "require": {
-    "better-route/better-route": "*"
+    "better-route/better-route": "^0.1.1"
   },
   "repositories": [
     {
-      "type": "path",
-      "url": "../../../libraries/better-route",
-      "options": { "symlink": true }
+      "type": "vcs",
+      "url": "https://github.com/Lonsdale201/better-route"
     }
   ]
 }
 ```
 
-After package publication, consumers can use normal Composer constraint (for example `^1.0`).
+For local development only, you can still use path repository + symlink.
 
 ## Quick Start
 
