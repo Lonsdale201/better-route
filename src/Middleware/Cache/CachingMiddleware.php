@@ -31,7 +31,7 @@ final class CachingMiddleware implements MiddlewareInterface
 
         $key = ($this->keyResolver)($context);
         $cached = $this->store->get($key);
-        if ($cached !== null) {
+        if ($cached !== null && $cached !== false) {
             return $cached;
         }
 

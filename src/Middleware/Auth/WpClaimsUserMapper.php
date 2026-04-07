@@ -104,11 +104,10 @@ final class WpClaimsUserMapper implements ClaimsUserMapperInterface
         }
 
         $user = get_user_by($field, $value);
-        if (!is_object($user) || !isset($user->ID)) {
+        if (!($user instanceof \WP_User)) {
             return null;
         }
 
-        $id = is_numeric($user->ID) ? (int) $user->ID : null;
-        return $id !== null && $id > 0 ? $id : null;
+        return $user->ID > 0 ? $user->ID : null;
     }
 }

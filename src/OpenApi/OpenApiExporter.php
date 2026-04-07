@@ -21,7 +21,9 @@ final class OpenApiExporter
      *   serverUrl?: string,
      *   openapiVersion?: string,
      *   includeExcluded?: bool,
-     *   components?: array<string, mixed>
+     *   components?: array<string, mixed>,
+     *   securitySchemes?: array<string, array<string, mixed>>,
+     *   globalSecurity?: list<array<string, list<string>>>
      * } $options
      * @return array<string, mixed>
      */
@@ -36,6 +38,8 @@ final class OpenApiExporter
 
         /** @var array<string, array<string, mixed>> $paths */
         $paths = [];
+        /** @var array<string, bool> $referencedSchemas */
+        $referencedSchemas = [];
 
         foreach ($contracts as $contract) {
             $meta = $contract['meta'];
@@ -55,6 +59,12 @@ final class OpenApiExporter
             );
 
             $paths[$openApiPath][$method] = $this->operationFromContract($contract, $meta, $method, $openApiPath);
+            $this->collectSchemaRef($meta['requestSchema'] ?? null, $referencedSchemas);
+            $this->collectSchemaRef($meta['responseSchema'] ?? null, $referencedSchemas);
+            $this->collectSchemaRefsFromResponses(
+                is_array($meta['responses'] ?? null) ? $meta['responses'] : [],
+                $referencedSchemas
+            );
         }
 
         ksort($paths);
@@ -62,6 +72,15 @@ final class OpenApiExporter
             ksort($operations);
         }
         unset($operations);
+
+        $securitySchemes = is_array($options['securitySchemes'] ?? null) ? $options['securitySchemes'] : [];
+        $globalSecurity = is_array($options['globalSecurity'] ?? null) ? $options['globalSecurity'] : [];
+
+        $components = $this->components(
+            is_array($options['components'] ?? null) ? $options['components'] : [],
+            array_keys($referencedSchemas),
+            $securitySchemes
+        );
 
         $document = [
             'openapi' => $openApiVersion,
@@ -73,11 +92,15 @@ final class OpenApiExporter
                 ['url' => $serverUrl],
             ],
             'paths' => $paths,
-            'components' => $this->components(is_array($options['components'] ?? null) ? $options['components'] : []),
+            'components' => $components,
         ];
 
         if ($description !== null && $description !== '') {
             $document['info']['description'] = $description;
+        }
+
+        if ($globalSecurity !== []) {
+            $document['security'] = $globalSecurity;
         }
 
         return $document;
@@ -114,6 +137,11 @@ final class OpenApiExporter
         $scopes = $this->stringList($meta['scopes'] ?? []);
         if ($scopes !== []) {
             $operation['x-scopes'] = $scopes;
+        }
+
+        $security = $this->normalizeSecurity($meta['security'] ?? null, $scopes);
+        if ($security !== null) {
+            $operation['security'] = $security;
         }
 
         $parameters = $this->normalizeParameters(is_array($meta['parameters'] ?? null) ? $meta['parameters'] : []);
@@ -171,7 +199,43 @@ final class OpenApiExporter
             'default' => [
                 '$ref' => '#/components/responses/ErrorResponse',
             ],
-        ];
+        ] + $this->normalizeResponses(is_array($meta['responses'] ?? null) ? $meta['responses'] : []);
+    }
+
+    /**
+     * @param array<int|string, mixed> $responses
+     * @return array<string, array<string, mixed>>
+     */
+    private function normalizeResponses(array $responses): array
+    {
+        $normalized = [];
+
+        foreach ($responses as $status => $definition) {
+            if (!is_array($definition)) {
+                continue;
+            }
+
+            $code = is_int($status) ? (string) $status : trim((string) $status);
+            if ($code === '') {
+                continue;
+            }
+
+            if (!preg_match('/^(default|[1-5][0-9]{2})$/', $code)) {
+                continue;
+            }
+
+            $entry = $definition;
+            if (!array_key_exists('$ref', $entry)) {
+                $description = $this->stringOrNull($entry['description'] ?? null);
+                $entry['description'] = $description !== null && $description !== ''
+                    ? $description
+                    : 'Response';
+            }
+
+            $normalized[$code] = $entry;
+        }
+
+        return $normalized;
     }
 
     /**
@@ -271,7 +335,9 @@ final class OpenApiExporter
             'operationId',
             'tags',
             'scopes',
+            'security',
             'parameters',
+            'responses',
             'requestSchema',
             'responseSchema',
             'openapi',
@@ -289,9 +355,11 @@ final class OpenApiExporter
 
     /**
      * @param array<string, mixed> $custom
+     * @param list<string> $referencedSchemas
+     * @param array<string, array<string, mixed>> $securitySchemes
      * @return array<string, mixed>
      */
-    private function components(array $custom): array
+    private function components(array $custom, array $referencedSchemas = [], array $securitySchemes = []): array
     {
         $base = [
             'schemas' => [
@@ -329,11 +397,88 @@ final class OpenApiExporter
             ],
         ];
 
-        if ($custom === []) {
-            return $base;
+        $components = $custom === [] ? $base : array_replace_recursive($base, $custom);
+
+        if ($securitySchemes !== []) {
+            if (!isset($components['securitySchemes']) || !is_array($components['securitySchemes'])) {
+                $components['securitySchemes'] = [];
+            }
+
+            foreach ($securitySchemes as $name => $scheme) {
+                if (is_string($name) && $name !== '' && is_array($scheme)) {
+                    $components['securitySchemes'][$name] = $scheme;
+                }
+            }
         }
 
-        return array_replace_recursive($base, $custom);
+        if (!isset($components['schemas']) || !is_array($components['schemas'])) {
+            $components['schemas'] = [];
+        }
+
+        foreach ($referencedSchemas as $schemaName) {
+            if ($schemaName === '' || isset($components['schemas'][$schemaName])) {
+                continue;
+            }
+
+            $components['schemas'][$schemaName] = [
+                'type' => 'object',
+                'description' => 'Auto-generated placeholder schema. Override via export options.components.schemas.',
+                'additionalProperties' => true,
+            ];
+        }
+
+        return $components;
+    }
+
+    /**
+     * @param array<string, bool> $target
+     */
+    private function collectSchemaRef(mixed $value, array &$target): void
+    {
+        if (!is_string($value) || $value === '') {
+            return;
+        }
+
+        $prefix = '#/components/schemas/';
+        if (!str_starts_with($value, $prefix)) {
+            return;
+        }
+
+        $schemaName = substr($value, strlen($prefix));
+        if ($schemaName !== '') {
+            $target[$schemaName] = true;
+        }
+    }
+
+    /**
+     * @param array<string, mixed> $responses
+     * @param array<string, bool> $target
+     */
+    private function collectSchemaRefsFromResponses(array $responses, array &$target): void
+    {
+        foreach ($responses as $definition) {
+            if (!is_array($definition)) {
+                continue;
+            }
+
+            $content = $definition['content'] ?? null;
+            if (!is_array($content)) {
+                continue;
+            }
+
+            foreach ($content as $mediaType) {
+                if (!is_array($mediaType)) {
+                    continue;
+                }
+
+                $schema = $mediaType['schema'] ?? null;
+                if (!is_array($schema)) {
+                    continue;
+                }
+
+                $this->collectSchemaRef($schema['$ref'] ?? null, $target);
+            }
+        }
     }
 
     private function toOpenApiPath(string $namespace, string $path): string
@@ -352,6 +497,41 @@ final class OpenApiExporter
         $normalized = preg_replace('/[^a-zA-Z0-9]+/', ' ', $openApiPath) ?? $openApiPath;
         $words = str_replace(' ', '', ucwords(strtolower(trim($normalized))));
         return $words !== '' ? $words : 'Operation';
+    }
+
+    /**
+     * @param list<string> $scopes
+     * @return list<array<string, list<string>>>|null
+     */
+    private function normalizeSecurity(mixed $security, array $scopes): ?array
+    {
+        if (is_array($security) && $security !== []) {
+            $normalized = [];
+            foreach ($security as $entry) {
+                if (is_array($entry)) {
+                    $requirement = [];
+                    foreach ($entry as $schemeName => $schemeScopes) {
+                        if (is_string($schemeName) && $schemeName !== '') {
+                            $requirement[$schemeName] = is_array($schemeScopes)
+                                ? array_values(array_filter($schemeScopes, 'is_string'))
+                                : [];
+                        }
+                    }
+
+                    if ($requirement !== []) {
+                        $normalized[] = $requirement;
+                    }
+                }
+            }
+
+            return $normalized !== [] ? $normalized : null;
+        }
+
+        if (is_string($security) && $security !== '') {
+            return [[$security => $scopes]];
+        }
+
+        return null;
     }
 
     /**
