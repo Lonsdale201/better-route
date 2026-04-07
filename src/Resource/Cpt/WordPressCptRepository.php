@@ -185,6 +185,7 @@ final class WordPressCptRepository implements CptRepositoryInterface
             'title' => (string) ($post->post_title ?? ''),
             'slug' => (string) ($post->post_name ?? ''),
             'excerpt' => (string) ($post->post_excerpt ?? ''),
+            'content' => (string) ($post->post_content ?? ''),
             'date' => (string) ($post->post_date_gmt ?? ''),
             'status' => (string) ($post->post_status ?? ''),
             'author' => (int) ($post->post_author ?? 0),

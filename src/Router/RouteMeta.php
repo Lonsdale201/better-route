@@ -23,6 +23,7 @@ final class RouteMeta
             $scopes = self::stringList($meta['policy']['scopes'] ?? []);
         }
         $parameters = is_array($meta['parameters'] ?? null) ? $meta['parameters'] : [];
+        $responses = is_array($meta['responses'] ?? null) ? $meta['responses'] : [];
         $requestSchema = self::stringOrNull($meta['requestSchema'] ?? null);
         $responseSchema = self::stringOrNull($meta['responseSchema'] ?? null);
         $openApiInclude = self::boolOrDefault($meta['openapi']['include'] ?? null, true);
@@ -32,6 +33,7 @@ final class RouteMeta
             'tags',
             'scopes',
             'parameters',
+            'responses',
             'requestSchema',
             'responseSchema',
             'openapi',
@@ -49,6 +51,7 @@ final class RouteMeta
             'tags' => $tags,
             'scopes' => $scopes,
             'parameters' => $parameters,
+            'responses' => $responses,
             'requestSchema' => $requestSchema,
             'responseSchema' => $responseSchema,
             'openapi' => [

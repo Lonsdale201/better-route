@@ -28,7 +28,8 @@ final class TransientCacheStore implements CacheStoreInterface
 
     public function get(string $key): mixed
     {
-        return ($this->getTransient)($this->storageKey($key));
+        $value = ($this->getTransient)($this->storageKey($key));
+        return $value === false ? null : $value;
     }
 
     public function set(string $key, mixed $value, int $ttlSeconds): void

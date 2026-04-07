@@ -183,6 +183,7 @@ You can export a document from contracts and optionally expose it as a REST endp
 
 ```php
 use BetterRoute\OpenApi\OpenApiExporter;
+use BetterRoute\BetterRoute;
 
 $contracts = array_merge(
     $router->contracts(true),
@@ -193,6 +194,14 @@ $openApi = (new OpenApiExporter())->export($contracts, [
     'title' => 'better-route API',
     'version' => 'v0.1.0',
     'serverUrl' => '/wp-json',
+    'components' => array_replace_recursive(
+        BetterRoute::wooOpenApiComponents(),
+        [
+            'schemas' => [
+                // Your non-Woo schemas can be merged here
+            ],
+        ]
+    ),
 ]);
 ```
 
@@ -216,6 +225,55 @@ OpenApiRouteRegistrar::register(
 ```
 
 Result endpoint: `GET /wp-json/better-route/v1/openapi.json`
+
+## WooCommerce HPOS Integration (Optional)
+
+The library can register WooCommerce routes as an optional integration layer.  
+This is **extra support** and does not affect non-Woo projects.
+
+```php
+use BetterRoute\BetterRoute;
+
+add_action('rest_api_init', function () {
+    $woo = BetterRoute::wooRouteRegistrar()->register('better-route/v1', [
+        'requireHpos' => true, // HPOS-only guard
+        'basePath' => 'woo',
+        'idempotency' => [
+            'enabled' => true,
+            'requireKey' => true,
+            'ttlSeconds' => 600,
+            // optional:
+            // 'resources' => ['orders' => true, 'products' => true],
+            // 'store' => new CustomIdempotencyStore(),
+        ],
+        'permissions' => [
+            // defaults are manage_woocommerce for all actions
+            'orders.list' => 'manage_woocommerce',
+            'orders.get' => 'manage_woocommerce',
+            'orders.create' => 'manage_woocommerce',
+            'orders.update' => 'manage_woocommerce',
+            'orders.delete' => 'manage_woocommerce',
+            'products.list' => 'manage_woocommerce',
+            'products.get' => 'manage_woocommerce',
+            'products.create' => 'manage_woocommerce',
+            'products.update' => 'manage_woocommerce',
+            'products.delete' => 'manage_woocommerce',
+        ],
+    ]);
+
+    // Optional OpenAPI export from registered Woo routes:
+    // $contracts = $woo->contracts(true);
+    // $components = BetterRoute::wooOpenApiComponents();
+});
+```
+
+Registered endpoints under `/wp-json/<vendor>/<version>/woo`:
+- orders: `list`, `get`, `create`, `update` (`PUT`/`PATCH`), `delete`
+- products: `list`, `get`, `create`, `update` (`PUT`/`PATCH`), `delete`
+
+When idempotency is enabled, write routes document and accept `Idempotency-Key` header, and may return:
+- `409` for `idempotency_conflict`
+- `400` for `idempotency_key_required` (if `requireKey=true`)
 
 ## Error Contract
 

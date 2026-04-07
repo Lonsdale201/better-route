@@ -324,13 +324,14 @@ final class Resource
                 $query = $this->applyDefaultCptStatusFilter($query);
                 $result = $repository->list($postType, $query);
                 $items = $this->filterVisibleCptItems($result['items'], 'list');
+                $total = $this->resolveVisibleCptListTotal($result, $items);
 
                 return [
                     'data' => $items,
                     'meta' => [
                         'page' => $result['page'],
                         'perPage' => $result['perPage'],
-                        'total' => count($items),
+                        'total' => $total,
                     ],
                 ];
             })->args($this->listRouteArgs($filterSchema))
@@ -750,7 +751,7 @@ final class Resource
 
         $permissions = $this->policy['permissions'] ?? null;
         if (!is_array($permissions)) {
-            return static fn (): bool => true;
+            return $this->defaultPermissionForAction($action);
         }
 
         $rule = $permissions[$action] ?? ($permissions['*'] ?? null);
@@ -777,7 +778,16 @@ final class Resource
             }
         }
 
-        return static fn (): bool => true;
+        return $this->defaultPermissionForAction($action);
+    }
+
+    private function defaultPermissionForAction(string $action): callable
+    {
+        // Secure-by-default: reads are public, writes require explicit policy.
+        return match ($action) {
+            'list', 'get' => static fn (): bool => true,
+            default => static fn (): bool => false,
+        };
     }
 
     private function currentUserCan(string $capability): bool
@@ -929,6 +939,25 @@ final class Resource
             page: $query->page,
             perPage: $query->perPage
         );
+    }
+
+    /**
+     * @param array{total?: mixed} $result
+     * @param list<array<string, mixed>> $visibleItems
+     */
+    private function resolveVisibleCptListTotal(array $result, array $visibleItems): int
+    {
+        if (is_callable($this->cptVisibilityPolicy)) {
+            // With custom per-item visibility we avoid leaking hidden totals.
+            return count($visibleItems);
+        }
+
+        $total = $result['total'] ?? null;
+        if (is_int($total) && $total >= 0) {
+            return $total;
+        }
+
+        return count($visibleItems);
     }
 
     /**
