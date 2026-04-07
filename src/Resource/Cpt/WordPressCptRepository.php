@@ -56,7 +56,7 @@ final class WordPressCptRepository implements CptRepositoryInterface
         }
 
         $post = get_post($id);
-        if (!is_object($post) || !isset($post->post_type) || $post->post_type !== $postType) {
+        if (!($post instanceof \WP_Post) || $post->post_type !== $postType) {
             return null;
         }
 
@@ -109,7 +109,7 @@ final class WordPressCptRepository implements CptRepositoryInterface
         }
 
         $post = function_exists('get_post') ? get_post($id) : null;
-        if (!is_object($post) || !isset($post->post_type) || $post->post_type !== $postType) {
+        if (!($post instanceof \WP_Post) || $post->post_type !== $postType) {
             return false;
         }
 

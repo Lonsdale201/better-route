@@ -151,7 +151,7 @@ final class WooCouponService
         $items = [];
         if (is_array($posts)) {
             foreach ($posts as $post) {
-                $postId = is_object($post) && isset($post->ID) ? (int) $post->ID : 0;
+                $postId = ($post instanceof \WP_Post) ? $post->ID : 0;
                 if ($postId < 1) {
                     continue;
                 }

@@ -4,8 +4,8 @@ declare(strict_types=1);
 
 namespace BetterRoute;
 
-use BetterRoute\Integration\Woo\WooRouteRegistrar;
 use BetterRoute\Integration\Woo\WooOpenApiComponents;
+use BetterRoute\Integration\Woo\WooRouteRegistrar;
 use BetterRoute\OpenApi\OpenApiExporter;
 use BetterRoute\Router\Router;
 

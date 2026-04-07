@@ -35,7 +35,7 @@ final class ArrayIdempotencyStore implements IdempotencyStoreInterface
     {
         $now = time();
         foreach ($this->items as $key => $item) {
-            if (($item['expiresAt'] ?? 0) <= $now) {
+            if ($item['expiresAt'] <= $now) {
                 unset($this->items[$key]);
             }
         }

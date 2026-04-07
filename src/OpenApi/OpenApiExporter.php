@@ -203,7 +203,7 @@ final class OpenApiExporter
     }
 
     /**
-     * @param array<string, mixed> $responses
+     * @param array<int|string, mixed> $responses
      * @return array<string, array<string, mixed>>
      */
     private function normalizeResponses(array $responses): array
