@@ -18,7 +18,7 @@ concurrency:
 jobs:
   quality:
     name: quality (PHP ${{ matrix.php }})
-    if: github.event_name == 'workflow_dispatch' || github.head_ref == 'dev'
+    if: github.event_name == 'workflow_dispatch' || github.event_name == 'pull_request'
     runs-on: ubuntu-latest
     strategy:
       fail-fast: false
