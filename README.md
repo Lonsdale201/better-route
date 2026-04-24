@@ -241,7 +241,40 @@ $openApi = (new OpenApiExporter())->export($contracts, [
             ],
         ]
     ),
+    // Reusable security definitions, merged into components.securitySchemes
+    'securitySchemes' => [
+        'bearerAuth' => [
+            'type' => 'http',
+            'scheme' => 'bearer',
+            'bearerFormat' => 'JWT',
+        ],
+        'cookieNonce' => [
+            'type' => 'apiKey',
+            'in' => 'header',
+            'name' => 'X-WP-Nonce',
+        ],
+    ],
+    // Document-level default security; per-route meta['security'] overrides.
+    'globalSecurity' => [
+        ['bearerAuth' => []],
+    ],
 ]);
+```
+
+Per-route overrides live in route `meta`:
+
+```php
+$router->get('/public/ping', fn () => ['pong' => true])
+    ->meta([
+        'operationId' => 'publicPing',
+        'security' => [],            // explicit no-auth (overrides globalSecurity)
+    ]);
+
+$router->post('/admin/reset', fn () => ['ok' => true])
+    ->meta([
+        'operationId' => 'adminReset',
+        'security' => [['bearerAuth' => ['admin:write']]],
+    ]);
 ```
 
 ### Register `openapi.json` endpoint
@@ -300,6 +333,21 @@ add_action('rest_api_init', function () {
             'products.create' => 'manage_woocommerce',
             'products.update' => 'manage_woocommerce',
             'products.delete' => 'manage_woocommerce',
+            'customers.list' => 'manage_woocommerce',
+            'customers.get' => 'manage_woocommerce',
+            'customers.create' => 'manage_woocommerce',
+            'customers.update' => 'manage_woocommerce',
+            'customers.delete' => 'manage_woocommerce',
+            'coupons.list' => 'manage_woocommerce',
+            'coupons.get' => 'manage_woocommerce',
+            'coupons.create' => 'manage_woocommerce',
+            'coupons.update' => 'manage_woocommerce',
+            'coupons.delete' => 'manage_woocommerce',
+        ],
+        // Optional — restrict which CRUD actions each resource exposes.
+        // Omit a key to get the full `['list', 'get', 'create', 'update', 'delete']` set.
+        'actions' => [
+            'customers' => ['list', 'get'], // read-only customers, full CRUD elsewhere
         ],
     ]);
 
@@ -312,6 +360,8 @@ add_action('rest_api_init', function () {
 Registered endpoints under `/wp-json/<vendor>/<version>/woo`:
 - orders: `list`, `get`, `create`, `update` (`PUT`/`PATCH`), `delete`
 - products: `list`, `get`, `create`, `update` (`PUT`/`PATCH`), `delete`
+- customers: `list`, `get`, `create`, `update` (`PUT`/`PATCH`), `delete`
+- coupons: `list`, `get`, `create`, `update` (`PUT`/`PATCH`), `delete`
 
 When idempotency is enabled, write routes document and accept `Idempotency-Key` header, and may return:
 - `409` for `idempotency_conflict`
