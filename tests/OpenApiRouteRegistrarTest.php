@@ -35,6 +35,7 @@ final class OpenApiRouteRegistrarTest extends TestCase
         self::assertSame('/openapi.json', $dispatcher->registrations[0]['route']->uri);
         self::assertSame('GET', $dispatcher->registrations[0]['route']->method);
         self::assertFalse((bool) $dispatcher->registrations[0]['route']->meta['openapi']['include']);
+        self::assertFalse((bool) ($dispatcher->registrations[0]['permissionCallback'])(new OpenApiRegistrarFakeRequest([])));
 
         $response = ($dispatcher->registrations[0]['callback'])(new OpenApiRegistrarFakeRequest([]));
         self::assertSame(200, $response['status']);

@@ -152,14 +152,15 @@ final class CustomerListQueryParser
     private function parseRole(mixed $rawRole): array
     {
         if ($rawRole === null || $rawRole === '') {
-            return [];
+            return ['customer'];
         }
 
         if (is_string($rawRole)) {
-            return array_values(array_filter(
+            $roles = array_values(array_filter(
                 array_map('trim', explode(',', $rawRole)),
                 static fn (string $value): bool => $value !== ''
             ));
+            return $this->assertCustomerRoles($roles);
         }
 
         if (is_array($rawRole)) {
@@ -170,10 +171,34 @@ final class CustomerListQueryParser
                 }
             }
 
-            return array_values($values);
+            return $this->assertCustomerRoles(array_values($values));
         }
 
         throw $this->validationError(['role' => ['must be string or array']]);
+    }
+
+    /**
+     * @param list<string> $roles
+     * @return list<string>
+     */
+    private function assertCustomerRoles(array $roles): array
+    {
+        if ($roles === []) {
+            return ['customer'];
+        }
+
+        $invalid = array_values(array_filter(
+            $roles,
+            static fn (string $role): bool => $role !== 'customer'
+        ));
+
+        if ($invalid !== []) {
+            throw $this->validationError([
+                'role' => ['only customer role is allowed'],
+            ]);
+        }
+
+        return $roles;
     }
 
     private function parseOptionalString(mixed $value, string $field): ?string

@@ -62,6 +62,25 @@ final class CachingMiddleware implements MiddlewareInterface
         }
 
         ksort($params);
-        return sha1($context->routePath . '|' . json_encode($params));
+        return sha1($context->routePath . '|' . $this->identityKey($context) . '|' . json_encode($params));
+    }
+
+    private function identityKey(RequestContext $context): string
+    {
+        $auth = $context->attributes['auth'] ?? null;
+        if (is_array($auth)) {
+            $provider = is_string($auth['provider'] ?? null) ? $auth['provider'] : 'auth';
+            $userId = $auth['userId'] ?? null;
+            if (is_int($userId) && $userId > 0) {
+                return $provider . ':user:' . $userId;
+            }
+
+            $subject = $auth['subject'] ?? null;
+            if (is_string($subject) && $subject !== '') {
+                return $provider . ':sub:' . $subject;
+            }
+        }
+
+        return 'guest';
     }
 }

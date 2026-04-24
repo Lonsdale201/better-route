@@ -229,7 +229,7 @@ final class WooOrderService
         return $this->mapOrder($order, $fields);
     }
 
-    public function delete(int $id): bool
+    public function delete(int $id, bool $force = true): bool
     {
         $this->assertWooFunctions();
 
@@ -238,7 +238,7 @@ final class WooOrderService
             return false;
         }
 
-        $deleted = $order->delete(true);
+        $deleted = $order->delete($force);
         return $deleted !== false;
     }
 

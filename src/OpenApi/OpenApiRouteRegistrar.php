@@ -36,7 +36,9 @@ final class OpenApiRouteRegistrar
         array $options = [],
         ?DispatcherInterface $dispatcher = null
     ): void {
-        $permissionCallback = $options['permissionCallback'] ?? (static fn (): bool => true);
+        $permissionCallback = $options['permissionCallback'] ?? static function (): bool {
+            return function_exists('current_user_can') && current_user_can('manage_options');
+        };
         if (!is_callable($permissionCallback)) {
             throw new InvalidArgumentException('permissionCallback must be callable.');
         }

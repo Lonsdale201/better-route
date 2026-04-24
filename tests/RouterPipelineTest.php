@@ -107,8 +107,9 @@ final class RouterPipelineTest extends TestCase
 
         self::assertSame(500, $response['status']);
         self::assertSame('internal_error', $response['body']['error']['code']);
-        self::assertSame('Boom', $response['body']['error']['message']);
+        self::assertSame('Unexpected error.', $response['body']['error']['message']);
         self::assertSame('req_test_3', $response['body']['error']['requestId']);
+        self::assertSame([], $response['body']['error']['details']);
     }
 
     public function testRouteBuilderSetsArgsMetaAndPermission(): void

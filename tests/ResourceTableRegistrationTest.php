@@ -69,6 +69,22 @@ final class ResourceTableRegistrationTest extends TestCase
         self::assertSame('rawArticlesGet', $contracts[1]['meta']['operationId']);
     }
 
+    public function testTableReadRoutesAreDeniedByDefault(): void
+    {
+        $dispatcher = new TableResourceDispatcher();
+
+        Resource::make('raw-articles')
+            ->restNamespace('better-route/v1')
+            ->sourceTable('ai_raw_articles', 'id')
+            ->allow(['list', 'get'])
+            ->fields(['id', 'title'])
+            ->usingTableRepository(new ArrayTableRepository())
+            ->register($dispatcher);
+
+        self::assertFalse((bool) ($dispatcher->registrations[0]['permissionCallback'])(new TableResourceFakeRequest([])));
+        self::assertFalse((bool) ($dispatcher->registrations[1]['permissionCallback'])(new TableResourceFakeRequest(['id' => '1'])));
+    }
+
     public function testRequiresFieldsForTableResource(): void
     {
         $this->expectException(\InvalidArgumentException::class);
@@ -145,6 +161,27 @@ final class ResourceTableRegistrationTest extends TestCase
         self::assertSame(1, $response['body']['data']['id']);
     }
 
+    public function testRouteIdWinsOverMergedRequestParamForTable(): void
+    {
+        $dispatcher = new TableResourceDispatcher();
+        $repository = new ArrayTableRepository();
+
+        Resource::make('raw-articles')
+            ->restNamespace('better-route/v1')
+            ->sourceTable('ai_raw_articles', 'id')
+            ->allow(['get'])
+            ->fields(['id', 'title'])
+            ->usingTableRepository($repository)
+            ->register($dispatcher);
+
+        ($dispatcher->registrations[0]['callback'])(new TableResourceFakeRequest(
+            ['id' => '999'],
+            ['id' => '1']
+        ));
+
+        self::assertSame(1, $repository->lastGetId);
+    }
+
     public function testRegistersCrudRoutesForTable(): void
     {
         $dispatcher = new TableResourceDispatcher();
@@ -181,6 +218,74 @@ final class ResourceTableRegistrationTest extends TestCase
         $delete = ($dispatcher->registrations[1]['callback'])(new TableResourceFakeRequest(['id' => '1']));
         self::assertSame(200, $delete['status']);
         self::assertTrue($delete['body']['data']['deleted']);
+    }
+
+    public function testWriteSchemaCoercesAndValidatesPayload(): void
+    {
+        $dispatcher = new TableResourceDispatcher();
+        $repository = new ArrayTableRepository();
+
+        Resource::make('raw-articles')
+            ->restNamespace('better-route/v1')
+            ->sourceTable('ai_raw_articles', 'id')
+            ->allow(['create'])
+            ->fields(['id', 'title', 'source_id'])
+            ->writeSchema([
+                'title' => ['type' => 'string', 'required' => true, 'minLength' => 3, 'sanitize' => 'text'],
+                'source_id' => ['type' => 'int', 'min' => 1],
+            ])
+            ->usingTableRepository($repository)
+            ->register($dispatcher);
+
+        $response = ($dispatcher->registrations[0]['callback'])(new TableResourceFakeRequest([
+            'title' => '<b>Row</b>',
+            'source_id' => '12',
+        ]));
+
+        self::assertSame(201, $response['status']);
+        self::assertSame('Row', $repository->item['title']);
+        self::assertSame(12, $repository->item['source_id']);
+    }
+
+    public function testWriteSchemaRejectsInvalidPayload(): void
+    {
+        $dispatcher = new TableResourceDispatcher();
+
+        Resource::make('raw-articles')
+            ->restNamespace('better-route/v1')
+            ->sourceTable('ai_raw_articles', 'id')
+            ->allow(['create'])
+            ->fields(['id', 'title'])
+            ->writeSchema(['title' => ['type' => 'string', 'required' => true, 'minLength' => 3]])
+            ->usingTableRepository(new ArrayTableRepository())
+            ->register($dispatcher);
+
+        $response = ($dispatcher->registrations[0]['callback'])(new TableResourceFakeRequest(['title' => 'No']));
+
+        self::assertSame(400, $response['status']);
+        self::assertSame('validation_failed', $response['body']['error']['code']);
+    }
+
+    public function testFieldPolicyRejectsForbiddenWriteField(): void
+    {
+        $dispatcher = new TableResourceDispatcher();
+
+        Resource::make('raw-articles')
+            ->restNamespace('better-route/v1')
+            ->sourceTable('ai_raw_articles', 'id')
+            ->allow(['create'])
+            ->fields(['id', 'title', 'locked'])
+            ->fieldPolicy(['locked' => ['write' => false]])
+            ->usingTableRepository(new ArrayTableRepository())
+            ->register($dispatcher);
+
+        $response = ($dispatcher->registrations[0]['callback'])(new TableResourceFakeRequest([
+            'title' => 'Row',
+            'locked' => 'x',
+        ]));
+
+        self::assertSame(400, $response['status']);
+        self::assertSame('validation_failed', $response['body']['error']['code']);
     }
 
     public function testTableResourceUsesFilterSchemaTypeCoercion(): void
@@ -257,8 +362,9 @@ final class TableResourceFakeRequest
 {
     /**
      * @param array<string, mixed> $params
+     * @param array<string, mixed>|null $urlParams
      */
-    public function __construct(private readonly array $params)
+    public function __construct(private readonly array $params, private readonly ?array $urlParams = null)
     {
     }
 
@@ -273,6 +379,14 @@ final class TableResourceFakeRequest
     public function get_param(string $name): mixed
     {
         return $this->params[$name] ?? null;
+    }
+
+    /**
+     * @return array<string, mixed>
+     */
+    public function get_url_params(): array
+    {
+        return $this->urlParams ?? $this->params;
     }
 
     /**
@@ -308,6 +422,8 @@ final class ArrayTableRepository implements TableRepositoryInterface
         'source' => 'rss',
     ];
 
+    public ?int $lastGetId = null;
+
     public function list(string $table, string $primaryKey, TableListQuery $query): array
     {
         $this->lastListQuery = $query;
@@ -322,6 +438,8 @@ final class ArrayTableRepository implements TableRepositoryInterface
 
     public function get(string $table, string $primaryKey, int $id, array $fields): ?array
     {
+        $this->lastGetId = $id;
+
         if ($this->item === null) {
             return null;
         }

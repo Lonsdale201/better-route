@@ -4,6 +4,7 @@ declare(strict_types=1);
 
 namespace BetterRoute\Tests;
 
+use BetterRoute\Middleware\Write\WpdbIdempotencyStore;
 use BetterRoute\Storage\WpdbAdapter;
 use BetterRoute\Storage\WpdbClient;
 use PHPUnit\Framework\TestCase;
@@ -58,6 +59,40 @@ final class WpdbAdapterTest extends TestCase
         );
     }
 
+    public function testRejectsCrossDatabaseTableNames(): void
+    {
+        $GLOBALS['wpdb'] = new FakeWpdbClient();
+
+        $this->expectException(\RuntimeException::class);
+        $this->expectExceptionMessage('Cross-database table names');
+
+        (new WpdbAdapter())->list(
+            table: 'other_db.ai_raw_articles',
+            primaryKey: 'id',
+            fields: ['id'],
+            filters: [],
+            sortField: null,
+            sortDirection: 'ASC',
+            page: 1,
+            perPage: 20
+        );
+    }
+
+    public function testRejectsStructuredWritePayloads(): void
+    {
+        $GLOBALS['wpdb'] = new FakeWpdbClient();
+
+        $this->expectException(\RuntimeException::class);
+        $this->expectExceptionMessage('structured payload');
+
+        (new WpdbAdapter())->create(
+            table: 'ai_raw_articles',
+            primaryKey: 'id',
+            payload: ['title' => ['nested' => true]],
+            fields: ['id', 'title']
+        );
+    }
+
     public function testCreateUpdateDeleteWorkWithPreparedQueries(): void
     {
         $fakeWpdb = new FakeWpdbClient();
@@ -92,6 +127,24 @@ final class WpdbAdapterTest extends TestCase
             id: 10
         );
         self::assertTrue($deleted);
+    }
+
+    public function testWpdbIdempotencyStoreReadsAndWritesSerializedRecords(): void
+    {
+        $fakeWpdb = new FakeWpdbClient();
+        $GLOBALS['wpdb'] = $fakeWpdb;
+
+        $store = new WpdbIdempotencyStore();
+        $store->set('idem-key', ['ok' => true], 60);
+
+        self::assertNotEmpty($fakeWpdb->queryCalls);
+
+        $fakeWpdb->results = [[
+            'value' => serialize(['ok' => true]),
+            'expires_at' => time() + 60,
+        ]];
+
+        self::assertSame(['ok' => true], $store->get('idem-key'));
     }
 
     protected function tearDown(): void

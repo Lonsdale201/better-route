@@ -5,12 +5,14 @@ declare(strict_types=1);
 namespace BetterRoute\Tests;
 
 use BetterRoute\Http\ApiException;
+use BetterRoute\Http\ClientIpResolver;
 use BetterRoute\Http\RequestContext;
 use BetterRoute\Http\Response;
 use BetterRoute\Middleware\Audit\AuditLoggerInterface;
 use BetterRoute\Middleware\Audit\AuditMiddleware;
 use BetterRoute\Middleware\Cache\CacheStoreInterface;
 use BetterRoute\Middleware\Cache\CachingMiddleware;
+use BetterRoute\Middleware\Cache\ETagMiddleware;
 use BetterRoute\Middleware\Jwt\JwtAuthMiddleware;
 use BetterRoute\Middleware\Jwt\JwtVerifierInterface;
 use BetterRoute\Middleware\RateLimit\RateLimiterInterface;
@@ -82,6 +84,77 @@ final class BuiltInMiddlewareTest extends TestCase
         self::assertSame(1, $calls);
     }
 
+    public function testCachingMiddlewareSeparatesAuthIdentities(): void
+    {
+        $store = new FakeCacheStore();
+        $middleware = new CachingMiddleware($store, 60);
+
+        $contextA = new RequestContext('req_cache_a', '/cache', new MiddlewareRequest([], 'GET', ['page' => 1]), [
+            'auth' => ['provider' => 'jwt', 'userId' => 1],
+        ]);
+        $contextB = new RequestContext('req_cache_b', '/cache', new MiddlewareRequest([], 'GET', ['page' => 1]), [
+            'auth' => ['provider' => 'jwt', 'userId' => 2],
+        ]);
+
+        $calls = 0;
+        $next = static function () use (&$calls): array {
+            $calls++;
+            return ['call' => $calls];
+        };
+
+        self::assertSame(['call' => 1], $middleware->handle($contextA, $next));
+        self::assertSame(['call' => 2], $middleware->handle($contextB, $next));
+        self::assertSame(['call' => 1], $middleware->handle($contextA, $next));
+        self::assertSame(2, $calls);
+    }
+
+    public function testRateLimitDefaultKeyIncludesAuthIdentity(): void
+    {
+        $limiter = new FakeRateLimiter(new RateLimitResult(true, 5, 1730000000));
+        $middleware = new RateLimitMiddleware($limiter, limit: 10, windowSeconds: 60);
+
+        $context = new RequestContext('req_rate_auth', '/rate', new MiddlewareRequest([]), [
+            'auth' => ['provider' => 'jwt', 'subject' => 'subject-1'],
+        ]);
+
+        $middleware->handle($context, static fn (): Response => new Response(['ok' => true], 200));
+
+        self::assertSame('/rate|jwt:sub:subject-1', $limiter->lastKey);
+    }
+
+    public function testETagMiddlewareAddsHeaderAndReturnsNotModified(): void
+    {
+        $middleware = new ETagMiddleware();
+        $context = new RequestContext('req_etag', '/etag', new MiddlewareRequest([], 'GET'));
+
+        $first = $middleware->handle($context, static fn (): array => ['ok' => true]);
+        self::assertInstanceOf(Response::class, $first);
+        self::assertSame(200, $first->status);
+        self::assertArrayHasKey('ETag', $first->headers);
+
+        $secondContext = new RequestContext('req_etag_2', '/etag', new MiddlewareRequest([
+            'if-none-match' => $first->headers['ETag'],
+        ], 'GET'));
+        $second = $middleware->handle($secondContext, static fn (): array => ['ok' => true]);
+
+        self::assertInstanceOf(Response::class, $second);
+        self::assertSame(304, $second->status);
+    }
+
+    public function testClientIpResolverOnlyTrustsForwardedHeaderFromTrustedProxy(): void
+    {
+        $resolver = new ClientIpResolver(trustedProxies: ['10.0.0.1']);
+
+        self::assertSame('203.0.113.10', $resolver->resolve([
+            'REMOTE_ADDR' => '10.0.0.1',
+            'HTTP_X_FORWARDED_FOR' => '203.0.113.10, 10.0.0.1',
+        ]));
+        self::assertSame('198.51.100.2', $resolver->resolve([
+            'REMOTE_ADDR' => '198.51.100.2',
+            'HTTP_X_FORWARDED_FOR' => '203.0.113.10',
+        ]));
+    }
+
     public function testAuditMiddlewareLogsSuccessAndErrors(): void
     {
         $logger = new FakeAuditLogger();
@@ -121,12 +194,15 @@ final class FakeJwtVerifier implements JwtVerifierInterface
 
 final class FakeRateLimiter implements RateLimiterInterface
 {
+    public ?string $lastKey = null;
+
     public function __construct(private readonly RateLimitResult $result)
     {
     }
 
     public function hit(string $key, int $limit, int $windowSeconds): RateLimitResult
     {
+        $this->lastKey = $key;
         return $this->result;
     }
 }

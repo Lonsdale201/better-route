@@ -4,6 +4,8 @@ declare(strict_types=1);
 
 namespace BetterRoute\OpenApi;
 
+use InvalidArgumentException;
+
 final class OpenApiExporter
 {
     /**
@@ -23,7 +25,8 @@ final class OpenApiExporter
      *   includeExcluded?: bool,
      *   components?: array<string, mixed>,
      *   securitySchemes?: array<string, array<string, mixed>>,
-     *   globalSecurity?: list<array<string, list<string>>>
+     *   globalSecurity?: list<array<string, list<string>>>,
+     *   strictSchemas?: bool
      * } $options
      * @return array<string, mixed>
      */
@@ -35,6 +38,7 @@ final class OpenApiExporter
         $serverUrl = $this->stringOrDefault($options['serverUrl'] ?? null, '/wp-json');
         $openApiVersion = $this->stringOrDefault($options['openapiVersion'] ?? null, '3.1.0');
         $includeExcluded = ($options['includeExcluded'] ?? false) === true;
+        $strictSchemas = ($options['strictSchemas'] ?? false) === true;
 
         /** @var array<string, array<string, mixed>> $paths */
         $paths = [];
@@ -79,7 +83,8 @@ final class OpenApiExporter
         $components = $this->components(
             is_array($options['components'] ?? null) ? $options['components'] : [],
             array_keys($referencedSchemas),
-            $securitySchemes
+            $securitySchemes,
+            $strictSchemas
         );
 
         $document = [
@@ -359,8 +364,12 @@ final class OpenApiExporter
      * @param array<string, array<string, mixed>> $securitySchemes
      * @return array<string, mixed>
      */
-    private function components(array $custom, array $referencedSchemas = [], array $securitySchemes = []): array
-    {
+    private function components(
+        array $custom,
+        array $referencedSchemas = [],
+        array $securitySchemes = [],
+        bool $strictSchemas = false
+    ): array {
         $base = [
             'schemas' => [
                 'Error' => [
@@ -418,6 +427,14 @@ final class OpenApiExporter
         foreach ($referencedSchemas as $schemaName) {
             if ($schemaName === '' || isset($components['schemas'][$schemaName])) {
                 continue;
+            }
+
+            if ($strictSchemas) {
+                throw new InvalidArgumentException(sprintf(
+                    'Missing OpenAPI schema "%s". Disable strictSchemas or provide options.components.schemas.%s.',
+                    $schemaName,
+                    $schemaName
+                ));
             }
 
             $components['schemas'][$schemaName] = [

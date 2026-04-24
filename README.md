@@ -14,6 +14,7 @@ Built for headless and integration-heavy projects where you want a stable, versi
   - CPT-backed endpoints
   - custom table-backed endpoints
 - Strict query contract (unknown params -> `400`)
+- Payload schema + field-level write policy for Resource writes
 - Unified error payload with `requestId`
 - Built-in auth bridge middlewares:
   - JWT/Bearer
@@ -22,6 +23,9 @@ Built for headless and integration-heavy projects where you want a stable, versi
 - Write safety middlewares:
   - idempotency key
   - optimistic lock (`If-Match` / version)
+- Read safety/caching helpers:
+  - ETag / `If-None-Match`
+  - identity-aware cache and rate-limit keys
 - Observability baseline:
   - audit event schema
   - metrics middleware
@@ -68,7 +72,11 @@ use BetterRoute\Middleware\Jwt\Hs256JwtVerifier;
 use BetterRoute\Middleware\Auth\WpClaimsUserMapper;
 
 add_action('rest_api_init', function () {
-    $jwt = new Hs256JwtVerifier($_ENV['JWT_SECRET']);
+    $jwt = new Hs256JwtVerifier(
+        secret: $_ENV['JWT_SECRET'],
+        expectedIssuer: 'https://auth.example.com',
+        expectedAudience: 'better-route'
+    );
 
     $router = Router::make('better-route', 'v1')
         ->middlewareFactory(function (string $class) use ($jwt) {
@@ -96,6 +104,7 @@ add_action('rest_api_init', function () {
 
 ```php
 use BetterRoute\Resource\Resource;
+use BetterRoute\Resource\ResourcePolicy;
 
 add_action('rest_api_init', function () {
     Resource::make('articles')
@@ -120,6 +129,16 @@ add_action('rest_api_init', function () {
                 'delete' => 'delete_posts',
             ],
         ])
+        ->fieldPolicy([
+            'status' => ['write' => 'publish_posts'],
+            'author' => ['write' => 'edit_others_posts'],
+        ])
+        ->writeSchema([
+            'title' => ['type' => 'string', 'required' => true, 'minLength' => 3, 'sanitize' => 'text'],
+            'status' => ['type' => 'enum', 'values' => ['draft', 'publish']],
+            'author' => ['type' => 'int', 'min' => 1],
+        ])
+        ->deleteMode('trash')
         ->maxPerPage(100)
         ->maxOffset(5000)
         ->register();
@@ -143,6 +162,12 @@ add_action('rest_api_init', function () {
             'lang' => 'string',
             'published' => 'bool',
         ])
+        ->policy(ResourcePolicy::adminOnly())
+        ->writeSchema([
+            'title' => ['type' => 'string', 'required' => true, 'sanitize' => 'text'],
+            'published' => ['type' => 'bool'],
+            'lang' => ['type' => 'enum', 'values' => ['hu', 'en']],
+        ])
         ->sort(['created_at', 'id'])
         ->maxPerPage(100)
         ->maxOffset(5000)
@@ -163,9 +188,22 @@ add_action('rest_api_init', function () {
 ### Write safety
 
 - `BetterRoute\Middleware\Write\IdempotencyMiddleware`
+- `BetterRoute\Middleware\Write\WpdbIdempotencyStore`
 - `BetterRoute\Middleware\Write\OptimisticLockMiddleware`
 - `BetterRoute\Http\ConflictException` (`409`)
 - `BetterRoute\Http\PreconditionFailedException` (`412`)
+
+### Cache / conditional reads
+
+- `BetterRoute\Middleware\Cache\CachingMiddleware`
+- `BetterRoute\Middleware\Cache\ETagMiddleware`
+
+### Rate limiting
+
+- `BetterRoute\Middleware\RateLimit\RateLimitMiddleware`
+- `BetterRoute\Middleware\RateLimit\TransientRateLimiter`
+- `BetterRoute\Middleware\RateLimit\WpObjectCacheRateLimiter`
+- `BetterRoute\Http\ClientIpResolver`
 
 ### Observability
 
@@ -194,6 +232,7 @@ $openApi = (new OpenApiExporter())->export($contracts, [
     'title' => 'better-route API',
     'version' => 'v0.1.0',
     'serverUrl' => '/wp-json',
+    'strictSchemas' => true,
     'components' => array_replace_recursive(
         BetterRoute::wooOpenApiComponents(),
         [
@@ -220,6 +259,8 @@ OpenApiRouteRegistrar::register(
         'title' => 'better-route API',
         'version' => 'v0.1.0',
         'serverUrl' => '/wp-json',
+        // Defaults to manage_options when omitted.
+        'permissionCallback' => static fn (): bool => current_user_can('manage_options'),
     ]
 );
 ```
@@ -238,6 +279,7 @@ add_action('rest_api_init', function () {
     $woo = BetterRoute::wooRouteRegistrar()->register('better-route/v1', [
         'requireHpos' => true, // HPOS-only guard
         'basePath' => 'woo',
+        'deleteMode' => 'trash', // force|trash for orders/products/coupons
         'idempotency' => [
             'enabled' => true,
             'requireKey' => true,

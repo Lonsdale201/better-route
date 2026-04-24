@@ -18,13 +18,16 @@ final class ErrorNormalizer
             : ($status === 400 ? 'invalid_request' : 'internal_error');
         $details = $throwable instanceof ApiException
             ? $throwable->details()
-            : ['exception' => $throwable::class];
+            : ($status === 400 ? ['exception' => $throwable::class] : []);
+        $message = $throwable instanceof ApiException || $status === 400
+            ? ($throwable->getMessage() !== '' ? $throwable->getMessage() : 'Invalid request.')
+            : 'Unexpected error.';
 
         return new Response(
             body: [
                 'error' => [
                     'code' => $code,
-                    'message' => $throwable->getMessage() !== '' ? $throwable->getMessage() : 'Unexpected error.',
+                    'message' => $message,
                     'requestId' => $requestId,
                     'details' => $details,
                 ],

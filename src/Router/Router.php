@@ -312,8 +312,11 @@ final class Router
     {
         if (is_object($request) && method_exists($request, 'get_header')) {
             $header = $request->get_header('x-request-id');
-            if (is_string($header) && $header !== '') {
-                return $header;
+            if (is_string($header)) {
+                $candidate = trim($header);
+                if (preg_match('/^[A-Za-z0-9._:-]{1,128}$/', $candidate) === 1) {
+                    return $candidate;
+                }
             }
         }
 

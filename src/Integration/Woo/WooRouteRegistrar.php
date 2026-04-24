@@ -34,6 +34,7 @@ final class WooRouteRegistrar
      *   basePath?: string,
      *   defaultPerPage?: int,
      *   maxPerPage?: int,
+     *   deleteMode?: string,
      *   register?: bool,
      *   permissions?: array<string, mixed>,
      *   actions?: array{orders?: list<string>, products?: list<string>, customers?: list<string>, coupons?: list<string>},
@@ -62,6 +63,7 @@ final class WooRouteRegistrar
         $requireHpos = ($options['requireHpos'] ?? true) === true;
         $defaultPerPage = max(1, (int) ($options['defaultPerPage'] ?? 20));
         $maxPerPage = max($defaultPerPage, (int) ($options['maxPerPage'] ?? 100));
+        $deleteMode = $this->resolveDeleteMode($options['deleteMode'] ?? null);
         $permissions = is_array($options['permissions'] ?? null) ? $options['permissions'] : [];
         $actions = is_array($options['actions'] ?? null) ? $options['actions'] : [];
         $idempotency = $this->resolveIdempotencyOptions($options['idempotency'] ?? null);
@@ -239,10 +241,10 @@ final class WooRouteRegistrar
         }
 
         if (in_array('delete', $orderActions, true)) {
-            $router->delete($basePath . '/orders/(?P<id>\d+)', function (mixed $request) use ($requireHpos): array {
+            $router->delete($basePath . '/orders/(?P<id>\d+)', function (mixed $request) use ($requireHpos, $deleteMode): array {
                 $this->guard->assertReady($requireHpos);
                 $id = $this->readId($request);
-                $deleted = $this->orderService->delete($id);
+                $deleted = $this->orderService->delete($id, $deleteMode === 'force');
                 if (!$deleted) {
                     throw new ApiException('Resource not found.', 404, 'not_found');
                 }
@@ -379,10 +381,10 @@ final class WooRouteRegistrar
         }
 
         if (in_array('delete', $productActions, true)) {
-            $router->delete($basePath . '/products/(?P<id>\d+)', function (mixed $request) use ($requireHpos): array {
+            $router->delete($basePath . '/products/(?P<id>\d+)', function (mixed $request) use ($requireHpos, $deleteMode): array {
                 $this->guard->assertReady($requireHpos);
                 $id = $this->readId($request);
-                $deleted = $this->productService->delete($id);
+                $deleted = $this->productService->delete($id, $deleteMode === 'force');
                 if (!$deleted) {
                     throw new ApiException('Resource not found.', 404, 'not_found');
                 }
@@ -616,9 +618,9 @@ final class WooRouteRegistrar
         }
 
         if (in_array('delete', $couponActions, true)) {
-            $router->delete($basePath . '/coupons/(?P<id>\d+)', function (mixed $request): array {
+            $router->delete($basePath . '/coupons/(?P<id>\d+)', function (mixed $request) use ($deleteMode): array {
                 $id = $this->readId($request);
-                $deleted = $this->couponService->delete($id);
+                $deleted = $this->couponService->delete($id, $deleteMode === 'force');
                 if (!$deleted) {
                     throw new ApiException('Resource not found.', 404, 'not_found');
                 }
@@ -746,6 +748,20 @@ final class WooRouteRegistrar
         }
 
         return new ArrayIdempotencyStore();
+    }
+
+    private function resolveDeleteMode(mixed $value): string
+    {
+        if (!is_string($value) || trim($value) === '') {
+            return 'force';
+        }
+
+        $mode = strtolower(trim($value));
+        if (!in_array($mode, ['force', 'trash'], true)) {
+            throw new \InvalidArgumentException('deleteMode must be "force" or "trash".');
+        }
+
+        return $mode;
     }
 
     /**
@@ -1083,7 +1099,14 @@ final class WooRouteRegistrar
     {
         $raw = null;
 
-        if (is_object($request) && method_exists($request, 'get_param')) {
+        if (is_object($request) && method_exists($request, 'get_url_params')) {
+            $params = $request->get_url_params();
+            if (is_array($params) && array_key_exists('id', $params)) {
+                $raw = $params['id'];
+            }
+        }
+
+        if ($raw === null && is_object($request) && method_exists($request, 'get_param')) {
             $raw = $request->get_param('id');
         } elseif (is_array($request) && isset($request['id'])) {
             $raw = $request['id'];

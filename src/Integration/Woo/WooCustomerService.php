@@ -176,6 +176,7 @@ final class WooCustomerService
     {
         $this->assertWooFunctions();
         $this->assertPayloadKeys($payload);
+        $this->assertCurrentUserCan('create_users');
 
         $email = $payload['email'] ?? null;
         if (!is_string($email) || $email === '') {
@@ -211,6 +212,8 @@ final class WooCustomerService
         if ($customer === null) {
             return null;
         }
+        $this->assertCustomerUser($id);
+        $this->assertCurrentUserCan('edit_user', $id);
 
         $this->assertPayloadKeys($payload);
         $this->applyPayload($customer, $payload, false);
@@ -231,6 +234,8 @@ final class WooCustomerService
         if ($user === false) {
             return false;
         }
+        $this->assertCustomerUser($id);
+        $this->assertCurrentUserCan('delete_user', $id);
 
         return wp_delete_user($id) !== false;
     }
@@ -369,6 +374,10 @@ final class WooCustomerService
             return null;
         }
 
+        if (!$this->isCustomerUser($id)) {
+            return null;
+        }
+
         try {
             $customer = new \WC_Customer($id);
         } catch (\Exception) {
@@ -380,6 +389,39 @@ final class WooCustomerService
         }
 
         return $customer;
+    }
+
+    private function assertCustomerUser(int $id): void
+    {
+        if (!$this->isCustomerUser($id)) {
+            throw new ApiException('Resource not found.', 404, 'not_found');
+        }
+    }
+
+    private function isCustomerUser(int $id): bool
+    {
+        if (!function_exists('get_userdata')) {
+            return true;
+        }
+
+        $user = get_userdata($id);
+        if (!is_object($user)) {
+            return false;
+        }
+
+        $roles = $user->roles;
+        if (!is_array($roles)) {
+            return false;
+        }
+
+        return in_array('customer', $roles, true);
+    }
+
+    private function assertCurrentUserCan(string $capability, mixed ...$args): void
+    {
+        if (function_exists('current_user_can') && !current_user_can($capability, ...$args)) {
+            throw new ApiException('Forbidden.', 403, 'forbidden');
+        }
     }
 
     /**
