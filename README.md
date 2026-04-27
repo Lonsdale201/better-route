@@ -1,6 +1,6 @@
 # better-route
 
-[![OPEN BETTER-ROUTE DOCS](https://img.shields.io/badge/OPEN-BETTER--ROUTE%20DOCS-27AE60?style=for-the-badge&labelColor=2C3E50)]([https://lonsdale201.github.io/better-route-docs/docs/getting-started/installation](https://lonsdale201.github.io/better-docs/docs/better-route/getting-started/installation))
+[![OPEN BETTER-ROUTE DOCS](https://img.shields.io/badge/OPEN-BETTER--ROUTE%20DOCS-27AE60?style=for-the-badge&labelColor=2C3E50)](https://lonsdale201.github.io/better-docs/docs/better-route/getting-started/installation)
 
 A thin PHP 8.1+ REST routing and resource library for WordPress.
 
