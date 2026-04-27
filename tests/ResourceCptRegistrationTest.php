@@ -4,8 +4,8 @@ declare(strict_types=1);
 
 namespace BetterRoute\Tests;
 
+use BetterRoute\Resource\Cpt\CptDeleteModeRepositoryInterface;
 use BetterRoute\Resource\Cpt\CptListQuery;
-use BetterRoute\Resource\Cpt\CptRepositoryInterface;
 use BetterRoute\Resource\Resource;
 use BetterRoute\Router\DispatcherInterface;
 use BetterRoute\Router\RouteDefinition;
@@ -159,6 +159,27 @@ final class ResourceCptRegistrationTest extends TestCase
         self::assertSame(1, $response['body']['data']['id']);
     }
 
+    public function testRouteIdWinsOverMergedRequestParam(): void
+    {
+        $dispatcher = new ResourceDispatcher();
+        $repository = new ArrayCptRepository();
+
+        Resource::make('articles')
+            ->restNamespace('better-route/v1')
+            ->sourceCpt('post')
+            ->allow(['get'])
+            ->fields(['id', 'title'])
+            ->usingCptRepository($repository)
+            ->register($dispatcher);
+
+        ($dispatcher->registrations[0]['callback'])(new ResourceFakeRequest(
+            ['id' => '999'],
+            ['id' => '1']
+        ));
+
+        self::assertSame(1, $repository->lastGetId);
+    }
+
     public function testRegistersCrudRoutesForCpt(): void
     {
         $dispatcher = new ResourceDispatcher();
@@ -197,6 +218,25 @@ final class ResourceCptRegistrationTest extends TestCase
         $delete = ($dispatcher->registrations[1]['callback'])(new ResourceFakeRequest(['id' => '1']));
         self::assertSame(200, $delete['status']);
         self::assertTrue($delete['body']['data']['deleted']);
+    }
+
+    public function testCptDeleteModeIsPassedToRepositoryWhenSupported(): void
+    {
+        $dispatcher = new ResourceDispatcher();
+        $repository = new ArrayCptRepository();
+
+        Resource::make('articles')
+            ->restNamespace('better-route/v1')
+            ->sourceCpt('post')
+            ->allow(['delete'])
+            ->fields(['id', 'title'])
+            ->deleteMode('trash')
+            ->usingCptRepository($repository)
+            ->register($dispatcher);
+
+        ($dispatcher->registrations[0]['callback'])(new ResourceFakeRequest(['id' => '1']));
+
+        self::assertSame('trash', $repository->lastDeleteMode);
     }
 
     public function testCptVisibilityPolicyHidesDraftByDefault(): void
@@ -273,8 +313,9 @@ final class ResourceFakeRequest
 {
     /**
      * @param array<string, mixed> $params
+     * @param array<string, mixed>|null $urlParams
      */
-    public function __construct(private readonly array $params)
+    public function __construct(private readonly array $params, private readonly ?array $urlParams = null)
     {
     }
 
@@ -289,6 +330,14 @@ final class ResourceFakeRequest
     public function get_param(string $name): mixed
     {
         return $this->params[$name] ?? null;
+    }
+
+    /**
+     * @return array<string, mixed>
+     */
+    public function get_url_params(): array
+    {
+        return $this->urlParams ?? $this->params;
     }
 
     /**
@@ -313,7 +362,7 @@ final class ResourceFakeRequest
     }
 }
 
-final class ArrayCptRepository implements CptRepositoryInterface
+final class ArrayCptRepository implements CptDeleteModeRepositoryInterface
 {
     public ?CptListQuery $lastListQuery = null;
 
@@ -322,6 +371,9 @@ final class ArrayCptRepository implements CptRepositoryInterface
         'id' => 1,
         'title' => 'Article',
     ];
+
+    public ?int $lastGetId = null;
+    public ?string $lastDeleteMode = null;
 
     public function list(string $postType, CptListQuery $query): array
     {
@@ -337,6 +389,8 @@ final class ArrayCptRepository implements CptRepositoryInterface
 
     public function get(string $postType, int $id, array $fields): ?array
     {
+        $this->lastGetId = $id;
+
         if ($this->item === null) {
             return null;
         }
@@ -371,6 +425,13 @@ final class ArrayCptRepository implements CptRepositoryInterface
 
     public function delete(string $postType, int $id): bool
     {
+        return $this->deleteWithMode($postType, $id, 'force');
+    }
+
+    public function deleteWithMode(string $postType, int $id, string $mode): bool
+    {
+        $this->lastDeleteMode = $mode;
+
         if ($this->item === null) {
             return false;
         }

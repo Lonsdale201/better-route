@@ -41,12 +41,11 @@ final class BearerTokenAuthMiddleware implements MiddlewareInterface
 
         try {
             $claims = $this->verifier->verify($token);
-        } catch (Throwable $throwable) {
+        } catch (Throwable) {
             throw new ApiException(
                 message: 'Invalid token.',
                 status: 401,
-                errorCode: 'invalid_token',
-                details: ['reason' => $throwable->getMessage()]
+                errorCode: 'invalid_token'
             );
         }
 

@@ -77,6 +77,67 @@ final class WriteSafetyMiddlewareTest extends TestCase
         $middleware->handle($ctxB, static fn (): Response => new Response(['ok' => true], 201));
     }
 
+    public function testIdempotencyKeyIsScopedToAuthIdentity(): void
+    {
+        $store = new InMemoryIdempotencyStore();
+        $middleware = new IdempotencyMiddleware($store, ttlSeconds: 60, requireKey: true);
+
+        $request = new WriteSafetyRequest(
+            headers: ['idempotency-key' => 'same-key'],
+            method: 'POST',
+            json: ['title' => 'A']
+        );
+
+        $ctxA = new RequestContext('req_idem_user_a', '/items', $request, [
+            'auth' => ['provider' => 'jwt', 'userId' => 10],
+        ]);
+        $ctxB = new RequestContext('req_idem_user_b', '/items', $request, [
+            'auth' => ['provider' => 'jwt', 'userId' => 20],
+        ]);
+
+        $calls = 0;
+        $next = static function () use (&$calls): Response {
+            $calls++;
+            return new Response(['call' => $calls], 201);
+        };
+
+        $first = $middleware->handle($ctxA, $next);
+        $second = $middleware->handle($ctxB, $next);
+        $third = $middleware->handle($ctxA, $next);
+
+        self::assertSame(2, $calls);
+        self::assertSame(['call' => 1], $first->body);
+        self::assertSame(['call' => 2], $second->body);
+        self::assertSame(['call' => 1], $third->body);
+    }
+
+    public function testIdempotencyAppliesToPatchByDefault(): void
+    {
+        $store = new InMemoryIdempotencyStore();
+        $middleware = new IdempotencyMiddleware($store, ttlSeconds: 60, requireKey: true);
+
+        $context = new RequestContext(
+            'req_idem_patch',
+            '/items/1',
+            new WriteSafetyRequest(
+                headers: ['idempotency-key' => 'patch-1'],
+                method: 'PATCH',
+                json: ['title' => 'A']
+            )
+        );
+
+        $calls = 0;
+        $next = static function () use (&$calls): Response {
+            $calls++;
+            return new Response(['updated' => true], 200);
+        };
+
+        $middleware->handle($context, $next);
+        $middleware->handle($context, $next);
+
+        self::assertSame(1, $calls);
+    }
+
     public function testOptimisticLockMiddlewareAllowsMatchingVersion(): void
     {
         $middleware = new OptimisticLockMiddleware(

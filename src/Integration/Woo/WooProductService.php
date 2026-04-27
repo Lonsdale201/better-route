@@ -263,7 +263,7 @@ final class WooProductService
         return $this->mapProduct($product, $fields);
     }
 
-    public function delete(int $id): bool
+    public function delete(int $id, bool $force = true): bool
     {
         $this->assertWooFunctions();
 
@@ -272,7 +272,7 @@ final class WooProductService
             return false;
         }
 
-        $deleted = $product->delete(true);
+        $deleted = $product->delete($force);
         return $deleted !== false;
     }
 

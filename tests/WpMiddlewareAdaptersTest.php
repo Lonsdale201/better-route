@@ -91,6 +91,47 @@ final class WpMiddlewareAdaptersTest extends TestCase
         $verifier->verify($token);
     }
 
+    public function testHs256JwtVerifierRequiresExpirationByDefault(): void
+    {
+        $token = $this->signHs256Token(
+            ['alg' => 'HS256', 'typ' => 'JWT'],
+            ['sub' => 'user-1'],
+            'secret-123'
+        );
+
+        $verifier = new Hs256JwtVerifier('secret-123');
+
+        $this->expectException(\RuntimeException::class);
+        $this->expectExceptionMessage('exp is required');
+        $verifier->verify($token);
+    }
+
+    public function testHs256JwtVerifierValidatesIssuerAndAudience(): void
+    {
+        $now = 1700000000;
+        $token = $this->signHs256Token(
+            ['alg' => 'HS256', 'typ' => 'JWT'],
+            [
+                'sub' => 'user-1',
+                'iss' => 'issuer-a',
+                'aud' => ['better-route'],
+                'iat' => $now,
+                'exp' => $now + 120,
+            ],
+            'secret-123'
+        );
+
+        $verifier = new Hs256JwtVerifier(
+            'secret-123',
+            now: static fn (): int => $now,
+            expectedIssuer: 'issuer-a',
+            expectedAudience: 'better-route',
+            maxLifetimeSeconds: 300
+        );
+
+        self::assertSame('user-1', $verifier->verify($token)['sub']);
+    }
+
     public function testErrorLogAuditLoggerWritesJsonEvent(): void
     {
         $lines = [];

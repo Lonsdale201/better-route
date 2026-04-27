@@ -5,6 +5,7 @@ declare(strict_types=1);
 namespace BetterRoute\Middleware\RateLimit;
 
 use BetterRoute\Http\ApiException;
+use BetterRoute\Http\ClientIpResolver;
 use BetterRoute\Http\RequestContext;
 use BetterRoute\Http\Response;
 use BetterRoute\Middleware\MiddlewareInterface;
@@ -21,9 +22,10 @@ final class RateLimitMiddleware implements MiddlewareInterface
         private readonly RateLimiterInterface $limiter,
         private readonly int $limit = 60,
         private readonly int $windowSeconds = 60,
-        ?callable $keyResolver = null
+        ?callable $keyResolver = null,
+        private readonly ?ClientIpResolver $clientIpResolver = null
     ) {
-        $this->keyResolver = $keyResolver ?? static fn (RequestContext $context): string => $context->routePath;
+        $this->keyResolver = $keyResolver ?? fn (RequestContext $context): string => $context->routePath . '|' . $this->identityKey($context);
     }
 
     public function handle(RequestContext $context, callable $next): mixed
@@ -57,5 +59,29 @@ final class RateLimitMiddleware implements MiddlewareInterface
         }
 
         return $response;
+    }
+
+    private function identityKey(RequestContext $context): string
+    {
+        $auth = $context->attributes['auth'] ?? null;
+        if (is_array($auth)) {
+            $provider = is_string($auth['provider'] ?? null) ? $auth['provider'] : 'auth';
+            $userId = $auth['userId'] ?? null;
+            if (is_int($userId) && $userId > 0) {
+                return $provider . ':user:' . $userId;
+            }
+
+            $subject = $auth['subject'] ?? null;
+            if (is_string($subject) && $subject !== '') {
+                return $provider . ':sub:' . $subject;
+            }
+        }
+
+        $clientIp = ($this->clientIpResolver ?? new ClientIpResolver())->resolve();
+        if ($clientIp !== null) {
+            return 'ip:' . $clientIp;
+        }
+
+        return 'guest';
     }
 }

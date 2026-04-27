@@ -17,10 +17,21 @@ final class Hs256JwtVerifier implements JwtVerifierInterface
     public function __construct(
         private readonly string $secret,
         private readonly int $leewaySeconds = 0,
-        ?callable $now = null
+        ?callable $now = null,
+        private readonly ?string $expectedIssuer = null,
+        private readonly ?string $expectedAudience = null,
+        private readonly bool $requireExpiration = true,
+        private readonly ?int $maxLifetimeSeconds = null,
+        private readonly int $maxTokenLength = 8192
     ) {
         if ($secret === '') {
             throw new RuntimeException('JWT secret must not be empty.');
+        }
+        if ($maxTokenLength < 1) {
+            throw new RuntimeException('JWT max token length must be positive.');
+        }
+        if ($maxLifetimeSeconds !== null && $maxLifetimeSeconds < 1) {
+            throw new RuntimeException('JWT max lifetime must be positive.');
         }
 
         $this->now = $now ?? static fn (): int => time();
@@ -28,6 +39,10 @@ final class Hs256JwtVerifier implements JwtVerifierInterface
 
     public function verify(string $token): array
     {
+        if (strlen($token) > $this->maxTokenLength) {
+            throw new RuntimeException('JWT is too large.');
+        }
+
         $parts = explode('.', $token);
         if (count($parts) !== 3) {
             throw new RuntimeException('Malformed JWT.');
@@ -50,6 +65,8 @@ final class Hs256JwtVerifier implements JwtVerifierInterface
         }
 
         $this->assertTimeClaims($payload);
+        $this->assertIssuer($payload);
+        $this->assertAudience($payload);
 
         return $payload;
     }
@@ -96,6 +113,10 @@ final class Hs256JwtVerifier implements JwtVerifierInterface
     {
         $now = ($this->now)();
 
+        if ($this->requireExpiration && !isset($claims['exp'])) {
+            throw new RuntimeException('JWT exp is required.');
+        }
+
         if (isset($claims['nbf'])) {
             $notBefore = $this->parseNumericClaim($claims['nbf'], 'nbf');
             if ($now + $this->leewaySeconds < $notBefore) {
@@ -115,7 +136,49 @@ final class Hs256JwtVerifier implements JwtVerifierInterface
             if ($now - $this->leewaySeconds >= $expiresAt) {
                 throw new RuntimeException('JWT expired.');
             }
+
+            if ($this->maxLifetimeSeconds !== null && isset($claims['iat'])) {
+                $issuedAt = $this->parseNumericClaim($claims['iat'], 'iat');
+                if ($expiresAt - $issuedAt > $this->maxLifetimeSeconds) {
+                    throw new RuntimeException('JWT lifetime is too long.');
+                }
+            }
         }
+    }
+
+    /**
+     * @param array<string, mixed> $claims
+     */
+    private function assertIssuer(array $claims): void
+    {
+        if ($this->expectedIssuer === null) {
+            return;
+        }
+
+        if (($claims['iss'] ?? null) !== $this->expectedIssuer) {
+            throw new RuntimeException('JWT issuer mismatch.');
+        }
+    }
+
+    /**
+     * @param array<string, mixed> $claims
+     */
+    private function assertAudience(array $claims): void
+    {
+        if ($this->expectedAudience === null) {
+            return;
+        }
+
+        $audience = $claims['aud'] ?? null;
+        if (is_string($audience) && $audience === $this->expectedAudience) {
+            return;
+        }
+
+        if (is_array($audience) && in_array($this->expectedAudience, $audience, true)) {
+            return;
+        }
+
+        throw new RuntimeException('JWT audience mismatch.');
     }
 
     private function parseNumericClaim(mixed $value, string $name): int

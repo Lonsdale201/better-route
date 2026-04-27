@@ -30,13 +30,13 @@ final class IdempotencyMiddleware implements MiddlewareInterface
         private readonly IdempotencyStoreInterface $store,
         private readonly int $ttlSeconds = 300,
         private readonly bool $requireKey = false,
-        array $methods = ['POST'],
+        array $methods = ['POST', 'PUT', 'PATCH', 'DELETE'],
         ?callable $keyResolver = null,
         ?callable $fingerprintResolver = null
     ) {
         $this->methods = array_values(array_map(static fn (string $method): string => strtoupper($method), $methods));
 
-        $this->keyResolver = $keyResolver ?? static fn (RequestContext $context, string $idempotencyKey): string => $context->routePath . '|' . $idempotencyKey;
+        $this->keyResolver = $keyResolver ?? fn (RequestContext $context, string $idempotencyKey): string => $context->routePath . '|' . $this->identityKey($context) . '|' . $idempotencyKey;
         $this->fingerprintResolver = $fingerprintResolver ?? fn (RequestContext $context): string => $this->defaultFingerprint($context);
     }
 
@@ -131,8 +131,28 @@ final class IdempotencyMiddleware implements MiddlewareInterface
         return sha1(json_encode([
             'route' => $context->routePath,
             'method' => $method,
+            'identity' => $this->identityKey($context),
             'params' => $params,
         ]));
+    }
+
+    private function identityKey(RequestContext $context): string
+    {
+        $auth = $context->attributes['auth'] ?? null;
+        if (is_array($auth)) {
+            $provider = is_string($auth['provider'] ?? null) ? $auth['provider'] : 'auth';
+            $userId = $auth['userId'] ?? null;
+            if (is_int($userId) && $userId > 0) {
+                return $provider . ':user:' . $userId;
+            }
+
+            $subject = $auth['subject'] ?? null;
+            if (is_string($subject) && $subject !== '') {
+                return $provider . ':sub:' . $subject;
+            }
+        }
+
+        return 'guest';
     }
 
     private function requestMethod(mixed $request): string

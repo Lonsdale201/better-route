@@ -6,6 +6,7 @@ namespace BetterRoute\Resource;
 
 use BetterRoute\Http\ApiException;
 use BetterRoute\Http\Response;
+use BetterRoute\Resource\Cpt\CptDeleteModeRepositoryInterface;
 use BetterRoute\Resource\Cpt\CptListQuery;
 use BetterRoute\Resource\Cpt\CptListQueryParser;
 use BetterRoute\Resource\Cpt\CptRepositoryInterface;
@@ -36,6 +37,10 @@ final class Resource
 
     /** @var array<string, mixed> */
     private array $policy = [];
+    /** @var array<string, array<string, mixed>|string> */
+    private array $writeSchema = [];
+    /** @var array<string, mixed> */
+    private array $fieldPolicy = [];
 
     private ?string $restNamespace = null;
     private ?string $sourceCpt = null;
@@ -47,6 +52,7 @@ final class Resource
     private int $maxPerPage = 100;
     private int $maxOffset = 10000;
     private bool $uniformEnvelope = false;
+    private string $deleteMode = 'force';
     /** @var array<string, array<string, mixed>|string> */
     private array $filterSchema = [];
     /** @var list<string> */
@@ -138,6 +144,32 @@ final class Resource
         return $this;
     }
 
+    /**
+     * @param array<string, array<string, mixed>|string> $schema
+     */
+    public function writeSchema(array $schema): self
+    {
+        $this->writeSchema = $schema;
+        return $this;
+    }
+
+    /**
+     * @param array<string, array<string, mixed>|string> $schema
+     */
+    public function payloadSchema(array $schema): self
+    {
+        return $this->writeSchema($schema);
+    }
+
+    /**
+     * @param array<string, mixed> $policy
+     */
+    public function fieldPolicy(array $policy): self
+    {
+        $this->fieldPolicy = $policy;
+        return $this;
+    }
+
     public function usingCptRepository(CptRepositoryInterface $repository): self
     {
         $this->cptRepository = $repository;
@@ -174,6 +206,17 @@ final class Resource
     public function uniformEnvelope(bool $enabled = true): self
     {
         $this->uniformEnvelope = $enabled;
+        return $this;
+    }
+
+    public function deleteMode(string $mode): self
+    {
+        $normalized = strtolower(trim($mode));
+        if (!in_array($normalized, ['force', 'trash'], true)) {
+            throw new InvalidArgumentException('deleteMode must be "force" or "trash".');
+        }
+
+        $this->deleteMode = $normalized;
         return $this;
     }
 
@@ -241,11 +284,14 @@ final class Resource
      *   sort: list<string>,
      *   filterSchema: array<string, array<string, mixed>|string>,
      *   policy: array<string, mixed>,
+     *   writeSchema: array<string, array<string, mixed>|string>,
+     *   fieldPolicy: array<string, mixed>,
      *   defaultPerPage: int,
      *   maxPerPage: int,
      *   maxOffset: int,
      *   cptVisibleStatuses: list<string>,
-     *   uniformEnvelope: bool
+     *   uniformEnvelope: bool,
+     *   deleteMode: string
      * }
      */
     public function descriptor(): array
@@ -262,11 +308,14 @@ final class Resource
             'sort' => $this->sort,
             'filterSchema' => $this->filterSchema,
             'policy' => $this->policy,
+            'writeSchema' => $this->writeSchema,
+            'fieldPolicy' => $this->fieldPolicy,
             'defaultPerPage' => $this->defaultPerPage,
             'maxPerPage' => $this->maxPerPage,
             'maxOffset' => $this->maxOffset,
             'cptVisibleStatuses' => $this->cptVisibleStatuses,
             'uniformEnvelope' => $this->uniformEnvelope,
+            'deleteMode' => $this->deleteMode,
         ];
     }
 
@@ -381,7 +430,7 @@ final class Resource
 
         if (in_array('create', $allowed, true)) {
             $router->post('/' . $this->name, function (mixed $request) use ($repository, $postType, $fields, $writeFields): Response {
-                $payload = $this->readPayload($request, $writeFields);
+                $payload = $this->readPayload($request, $writeFields, 'create');
                 $item = $repository->create($postType, $payload, $fields);
                 return new Response(['data' => $item], 201);
             })->meta($this->resourceRouteMeta(
@@ -396,7 +445,7 @@ final class Resource
         if (in_array('update', $allowed, true)) {
             $updateHandler = function (mixed $request) use ($repository, $postType, $fields, $writeFields): array {
                 $id = $this->readId($request);
-                $payload = $this->readPayload($request, $writeFields);
+                $payload = $this->readPayload($request, $writeFields, 'update', $id);
                 $item = $repository->update($postType, $id, $payload, $fields);
                 if ($item === null) {
                     throw new ApiException('Resource not found.', 404, 'not_found');
@@ -428,7 +477,9 @@ final class Resource
         if (in_array('delete', $allowed, true)) {
             $router->delete('/' . $this->name . '/(?P<id>\d+)', function (mixed $request) use ($repository, $postType): array {
                 $id = $this->readId($request);
-                $deleted = $repository->delete($postType, $id);
+                $deleted = $repository instanceof CptDeleteModeRepositoryInterface
+                    ? $repository->deleteWithMode($postType, $id, $this->deleteMode)
+                    : $repository->delete($postType, $id);
                 if (!$deleted) {
                     throw new ApiException('Resource not found.', 404, 'not_found');
                 }
@@ -534,7 +585,7 @@ final class Resource
 
         if (in_array('create', $allowed, true)) {
             $router->post('/' . $this->name, function (mixed $request) use ($repository, $table, $primaryKey, $fields, $writeFields): Response {
-                $payload = $this->readPayload($request, $writeFields);
+                $payload = $this->readPayload($request, $writeFields, 'create');
                 $item = $repository->create($table, $primaryKey, $payload, $fields);
                 return new Response(['data' => $item], 201);
             })->meta($this->resourceRouteMeta(
@@ -549,7 +600,7 @@ final class Resource
         if (in_array('update', $allowed, true)) {
             $updateHandler = function (mixed $request) use ($repository, $table, $primaryKey, $fields, $writeFields): array {
                 $id = $this->readId($request);
-                $payload = $this->readPayload($request, $writeFields);
+                $payload = $this->readPayload($request, $writeFields, 'update', $id);
                 $item = $repository->update($table, $primaryKey, $id, $payload, $fields);
                 if ($item === null) {
                     throw new ApiException('Resource not found.', 404, 'not_found');
@@ -783,9 +834,11 @@ final class Resource
 
     private function defaultPermissionForAction(string $action): callable
     {
-        // Secure-by-default: reads are public, writes require explicit policy.
+        // CPT reads still have a WordPress visibility model; raw table reads do not.
         return match ($action) {
-            'list', 'get' => static fn (): bool => true,
+            'list', 'get' => $this->sourceCpt !== null
+                ? static fn (): bool => true
+                : static fn (): bool => false,
             default => static fn (): bool => false,
         };
     }
@@ -1011,7 +1064,7 @@ final class Resource
      * @param list<string> $allowedFields
      * @return array<string, mixed>
      */
-    private function readPayload(mixed $request, array $allowedFields): array
+    private function readPayload(mixed $request, array $allowedFields, string $action, ?int $id = null): array
     {
         if ($allowedFields === []) {
             throw $this->validationError(['payload' => ['no writable fields configured']]);
@@ -1062,15 +1115,289 @@ final class Resource
         $result = [];
         foreach ($allowedFields as $field) {
             if (array_key_exists($field, $payload)) {
-                $result[$field] = $payload[$field];
+                $this->assertFieldWriteAllowed($field, $request, $action, $id);
+                $result[$field] = $this->coercePayloadValue($field, $payload[$field]);
             }
         }
+
+        $this->assertRequiredPayloadFields($result, $action);
 
         if ($result === []) {
             throw $this->validationError(['payload' => ['at least one field is required']]);
         }
 
         return $result;
+    }
+
+    private function assertFieldWriteAllowed(string $field, mixed $request, string $action, ?int $id): void
+    {
+        $rule = $this->fieldPolicy[$field] ?? null;
+        if (is_array($rule) && array_key_exists('write', $rule)) {
+            $rule = $rule['write'];
+        }
+
+        if ($rule === null) {
+            return;
+        }
+
+        if (is_bool($rule)) {
+            if (!$rule) {
+                throw $this->validationError([$field => ['field is not writable']]);
+            }
+
+            return;
+        }
+
+        if (is_string($rule) && $rule !== '') {
+            if (!$this->currentUserCan($rule)) {
+                throw new ApiException('Forbidden.', 403, 'forbidden', [
+                    'fieldErrors' => [$field => ['insufficient capability']],
+                ]);
+            }
+
+            return;
+        }
+
+        if (is_array($rule)) {
+            $caps = array_values(array_filter(
+                array_map(static fn (mixed $cap): string => is_string($cap) ? trim($cap) : '', $rule),
+                static fn (string $cap): bool => $cap !== ''
+            ));
+            if ($caps !== [] && !$this->currentUserCanAny($caps)) {
+                throw new ApiException('Forbidden.', 403, 'forbidden', [
+                    'fieldErrors' => [$field => ['insufficient capability']],
+                ]);
+            }
+
+            return;
+        }
+
+        if (is_callable($rule) && !(bool) $this->invokeFieldPolicyCallable($rule, $request, $field, $action, $id)) {
+            throw new ApiException('Forbidden.', 403, 'forbidden', [
+                'fieldErrors' => [$field => ['field write denied']],
+            ]);
+        }
+    }
+
+    private function invokeFieldPolicyCallable(callable $callable, mixed $request, string $field, string $action, ?int $id): mixed
+    {
+        $args = [$request, $field, $action, $id, $this];
+
+        try {
+            if (is_array($callable) && count($callable) === 2) {
+                $reflection = new ReflectionMethod($callable[0], (string) $callable[1]);
+            } else {
+                $reflection = new ReflectionFunction(\Closure::fromCallable($callable));
+            }
+
+            if ($reflection->isVariadic()) {
+                return $callable(...$args);
+            }
+
+            return $callable(...array_slice($args, 0, $reflection->getNumberOfParameters()));
+        } catch (ReflectionException) {
+            return $callable($request);
+        }
+    }
+
+    /**
+     * @param array<string, mixed> $payload
+     */
+    private function assertRequiredPayloadFields(array $payload, string $action): void
+    {
+        if ($action !== 'create') {
+            return;
+        }
+
+        $errors = [];
+        foreach ($this->writeSchema as $field => $rawRule) {
+            $rule = $this->normalizeWriteRule($rawRule);
+            if (($rule['required'] ?? false) === true && !array_key_exists((string) $field, $payload)) {
+                $errors[(string) $field] = ['field is required'];
+            }
+        }
+
+        if ($errors !== []) {
+            throw $this->validationError($errors);
+        }
+    }
+
+    private function coercePayloadValue(string $field, mixed $value): mixed
+    {
+        $rule = $this->normalizeWriteRule($this->writeSchema[$field] ?? null);
+        if ($rule === []) {
+            return $value;
+        }
+
+        if ($value === null) {
+            if (($rule['nullable'] ?? false) === true) {
+                return null;
+            }
+
+            throw $this->validationError([$field => ['must not be null']]);
+        }
+
+        $type = (string) ($rule['type'] ?? 'mixed');
+        $coerced = match ($type) {
+            'int', 'integer' => $this->coerceInt($field, $value),
+            'float', 'number' => $this->coerceFloat($field, $value),
+            'bool', 'boolean' => $this->coerceBool($field, $value),
+            'string', 'date', 'email', 'url' => $this->coerceString($field, $value),
+            'array' => is_array($value) ? $value : throw $this->validationError([$field => ['must be an array']]),
+            'object' => is_array($value) && !array_is_list($value) ? $value : throw $this->validationError([$field => ['must be an object']]),
+            'enum' => $this->coerceString($field, $value),
+            default => $value,
+        };
+
+        if (isset($rule['sanitize'])) {
+            $coerced = $this->sanitizeValue($field, $coerced, $rule['sanitize']);
+        }
+
+        $this->assertValueConstraints($field, $coerced, $rule);
+
+        return $coerced;
+    }
+
+    /**
+     * @return array<string, mixed>
+     */
+    private function normalizeWriteRule(mixed $rule): array
+    {
+        if ($rule === null) {
+            return [];
+        }
+
+        if (is_string($rule) && $rule !== '') {
+            return ['type' => $rule];
+        }
+
+        return is_array($rule) ? $rule : [];
+    }
+
+    private function coerceString(string $field, mixed $value): string
+    {
+        if (is_string($value) || is_int($value) || is_float($value) || is_bool($value)) {
+            return (string) $value;
+        }
+
+        throw $this->validationError([$field => ['must be a string']]);
+    }
+
+    private function coerceInt(string $field, mixed $value): int
+    {
+        if (is_int($value)) {
+            return $value;
+        }
+
+        if (is_string($value) && preg_match('/^-?\d+$/', $value) === 1) {
+            return (int) $value;
+        }
+
+        throw $this->validationError([$field => ['must be an integer']]);
+    }
+
+    private function coerceFloat(string $field, mixed $value): float
+    {
+        if (is_float($value) || is_int($value) || (is_string($value) && is_numeric($value))) {
+            return (float) $value;
+        }
+
+        throw $this->validationError([$field => ['must be a number']]);
+    }
+
+    private function coerceBool(string $field, mixed $value): bool
+    {
+        if (is_bool($value)) {
+            return $value;
+        }
+
+        if (is_int($value) && ($value === 0 || $value === 1)) {
+            return $value === 1;
+        }
+
+        if (is_string($value)) {
+            $normalized = strtolower(trim($value));
+            if (in_array($normalized, ['1', 'true', 'yes'], true)) {
+                return true;
+            }
+
+            if (in_array($normalized, ['0', 'false', 'no'], true)) {
+                return false;
+            }
+        }
+
+        throw $this->validationError([$field => ['must be boolean']]);
+    }
+
+    private function sanitizeValue(string $field, mixed $value, mixed $sanitize): mixed
+    {
+        if (is_callable($sanitize)) {
+            return $sanitize($value, $field);
+        }
+
+        if (!is_string($sanitize)) {
+            return $value;
+        }
+
+        return match ($sanitize) {
+            'text' => is_string($value) ? $this->sanitizeText($value) : $value,
+            'email' => is_string($value) ? strtolower(trim($value)) : $value,
+            'key' => is_string($value) ? preg_replace('/[^A-Za-z0-9_-]/', '', $value) : $value,
+            'url' => is_string($value) ? trim($value) : $value,
+            default => $value,
+        };
+    }
+
+    private function sanitizeText(string $value): string
+    {
+        if (function_exists('sanitize_text_field')) {
+            return sanitize_text_field($value);
+        }
+
+        return trim(strip_tags($value));
+    }
+
+    /**
+     * @param array<string, mixed> $rule
+     */
+    private function assertValueConstraints(string $field, mixed $value, array $rule): void
+    {
+        if (($rule['type'] ?? null) === 'enum') {
+            $values = $rule['values'] ?? [];
+            if (!is_array($values) || !in_array($value, $values, true)) {
+                throw $this->validationError([$field => ['must be one of the allowed values']]);
+            }
+        }
+
+        if (is_string($value)) {
+            if (isset($rule['minLength']) && strlen($value) < (int) $rule['minLength']) {
+                throw $this->validationError([$field => ['is too short']]);
+            }
+
+            if (isset($rule['maxLength']) && strlen($value) > (int) $rule['maxLength']) {
+                throw $this->validationError([$field => ['is too long']]);
+            }
+
+            if (isset($rule['regex']) && is_string($rule['regex']) && preg_match($rule['regex'], $value) !== 1) {
+                throw $this->validationError([$field => ['has invalid format']]);
+            }
+
+            if (($rule['type'] ?? null) === 'email' && filter_var($value, FILTER_VALIDATE_EMAIL) === false) {
+                throw $this->validationError([$field => ['must be a valid email']]);
+            }
+
+            if (($rule['type'] ?? null) === 'url' && filter_var($value, FILTER_VALIDATE_URL) === false) {
+                throw $this->validationError([$field => ['must be a valid URL']]);
+            }
+        }
+
+        if ((is_int($value) || is_float($value)) && isset($rule['min']) && $value < (float) $rule['min']) {
+            throw $this->validationError([$field => ['is too small']]);
+        }
+
+        if ((is_int($value) || is_float($value)) && isset($rule['max']) && $value > (float) $rule['max']) {
+            throw $this->validationError([$field => ['is too large']]);
+        }
     }
 
     private function assertPaginationConfiguration(): void
@@ -1096,7 +1423,14 @@ final class Resource
     {
         $raw = null;
 
-        if (is_object($request) && method_exists($request, 'get_param')) {
+        if (is_object($request) && method_exists($request, 'get_url_params')) {
+            $params = $request->get_url_params();
+            if (is_array($params) && array_key_exists('id', $params)) {
+                $raw = $params['id'];
+            }
+        }
+
+        if ($raw === null && is_object($request) && method_exists($request, 'get_param')) {
             $raw = $request->get_param('id');
         } elseif (is_array($request) && isset($request['id'])) {
             $raw = $request['id'];

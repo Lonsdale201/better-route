@@ -11,7 +11,7 @@ final class MetaDataHelper
     /**
      * @return list<array{key: string, value: mixed}>
      */
-    public static function normalizeIncoming(mixed $metaData, string $field = 'meta_data'): array
+    public static function normalizeIncoming(mixed $metaData, string $field = 'meta_data', bool $allowProtected = false): array
     {
         if ($metaData === null) {
             return [];
@@ -27,6 +27,7 @@ final class MetaDataHelper
             $normalized = [];
             foreach ($metaData as $key => $value) {
                 if (is_string($key) && $key !== '') {
+                    self::assertAllowedKey($key, $field . '.' . $key, $allowProtected);
                     $normalized[] = ['key' => $key, 'value' => $value];
                 }
             }
@@ -48,6 +49,7 @@ final class MetaDataHelper
                     'fieldErrors' => [$field . '.' . $index . '.key' => ['must be a non-empty string']],
                 ]);
             }
+            self::assertAllowedKey($key, $field . '.' . $index . '.key', $allowProtected);
 
             $normalized[] = [
                 'key' => $key,
@@ -61,7 +63,7 @@ final class MetaDataHelper
     /**
      * @return list<array{key: string, value: mixed, id?: int}>
      */
-    public static function serialize(mixed $metaData): array
+    public static function serialize(mixed $metaData, bool $includeProtected = false): array
     {
         if (!is_array($metaData)) {
             return [];
@@ -72,6 +74,10 @@ final class MetaDataHelper
             if (is_object($entry) && method_exists($entry, 'get_data')) {
                 $data = $entry->get_data();
                 if (is_array($data) && isset($data['key']) && is_string($data['key']) && $data['key'] !== '') {
+                    if (!$includeProtected && self::isProtectedKey($data['key'])) {
+                        continue;
+                    }
+
                     $row = [
                         'key' => $data['key'],
                         'value' => $data['value'] ?? null,
@@ -88,6 +94,10 @@ final class MetaDataHelper
             }
 
             if (is_array($entry) && isset($entry['key']) && is_string($entry['key']) && $entry['key'] !== '') {
+                if (!$includeProtected && self::isProtectedKey($entry['key'])) {
+                    continue;
+                }
+
                 $row = [
                     'key' => $entry['key'],
                     'value' => $entry['value'] ?? null,
@@ -116,5 +126,21 @@ final class MetaDataHelper
         foreach ($metaData as $entry) {
             $target->update_meta_data($entry['key'], $entry['value']);
         }
+    }
+
+    private static function assertAllowedKey(string $key, string $field, bool $allowProtected): void
+    {
+        if ($allowProtected || !self::isProtectedKey($key)) {
+            return;
+        }
+
+        throw new ApiException('Invalid request.', 400, 'validation_failed', [
+            'fieldErrors' => [$field => ['protected meta keys are not writable']],
+        ]);
+    }
+
+    private static function isProtectedKey(string $key): bool
+    {
+        return str_starts_with($key, '_');
     }
 }

@@ -235,7 +235,7 @@ final class WooCouponService
         return $this->mapCoupon($coupon, $fields);
     }
 
-    public function delete(int $id): bool
+    public function delete(int $id, bool $force = true): bool
     {
         $this->assertWooFunctions();
 
@@ -244,7 +244,7 @@ final class WooCouponService
             return false;
         }
 
-        $deleted = $coupon->delete(true);
+        $deleted = $coupon->delete($force);
         return $deleted !== false;
     }
 

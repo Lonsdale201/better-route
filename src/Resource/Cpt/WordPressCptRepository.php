@@ -4,9 +4,10 @@ declare(strict_types=1);
 
 namespace BetterRoute\Resource\Cpt;
 
+use BetterRoute\Http\ApiException;
 use RuntimeException;
 
-final class WordPressCptRepository implements CptRepositoryInterface
+final class WordPressCptRepository implements CptDeleteModeRepositoryInterface
 {
     public function list(string $postType, CptListQuery $query): array
     {
@@ -70,6 +71,7 @@ final class WordPressCptRepository implements CptRepositoryInterface
         }
 
         $postData = $this->mapPayloadToPostArray($postType, $payload);
+        $this->assertCanCreate($postType, $postData);
         $result = wp_insert_post($postData, true);
         if ($this->isWpError($result)) {
             throw new RuntimeException((string) $result->get_error_message());
@@ -94,6 +96,7 @@ final class WordPressCptRepository implements CptRepositoryInterface
 
         $postData = $this->mapPayloadToPostArray($postType, $payload);
         $postData['ID'] = $id;
+        $this->assertCanUpdate($postType, $id, $postData);
         $result = wp_update_post($postData, true);
         if ($this->isWpError($result)) {
             throw new RuntimeException((string) $result->get_error_message());
@@ -104,6 +107,11 @@ final class WordPressCptRepository implements CptRepositoryInterface
 
     public function delete(string $postType, int $id): bool
     {
+        return $this->deleteWithMode($postType, $id, 'force');
+    }
+
+    public function deleteWithMode(string $postType, int $id, string $mode): bool
+    {
         if (!function_exists('wp_delete_post')) {
             throw new RuntimeException('wp_delete_post is unavailable.');
         }
@@ -111,6 +119,15 @@ final class WordPressCptRepository implements CptRepositoryInterface
         $post = function_exists('get_post') ? get_post($id) : null;
         if (!($post instanceof \WP_Post) || $post->post_type !== $postType) {
             return false;
+        }
+        $this->assertCanDelete($id);
+
+        if ($mode === 'trash') {
+            if (!function_exists('wp_trash_post')) {
+                throw new RuntimeException('wp_trash_post is unavailable.');
+            }
+
+            return wp_trash_post($id) !== false;
         }
 
         return wp_delete_post($id, true) !== false;
@@ -234,6 +251,106 @@ final class WordPressCptRepository implements CptRepositoryInterface
         }
 
         return $data;
+    }
+
+    /**
+     * @param array<string, mixed> $postData
+     */
+    private function assertCanCreate(string $postType, array $postData): void
+    {
+        if (!function_exists('current_user_can')) {
+            return;
+        }
+
+        $caps = $this->postTypeCapabilities($postType);
+        if (!current_user_can($caps['edit_posts'])) {
+            throw new ApiException('Forbidden.', 403, 'forbidden');
+        }
+
+        if ($this->requiresPublishCapability($postData) && !current_user_can($caps['publish_posts'])) {
+            throw new ApiException('Forbidden.', 403, 'forbidden');
+        }
+
+        $author = $postData['post_author'] ?? null;
+        if (is_int($author) && $author > 0 && function_exists('get_current_user_id')) {
+            $currentUserId = (int) get_current_user_id();
+            if ($currentUserId > 0 && $author !== $currentUserId && !current_user_can($caps['edit_others_posts'])) {
+                throw new ApiException('Forbidden.', 403, 'forbidden');
+            }
+        }
+    }
+
+    /**
+     * @param array<string, mixed> $postData
+     */
+    private function assertCanUpdate(string $postType, int $id, array $postData): void
+    {
+        if (!function_exists('current_user_can')) {
+            return;
+        }
+
+        if (!current_user_can('edit_post', $id)) {
+            throw new ApiException('Forbidden.', 403, 'forbidden');
+        }
+
+        $caps = $this->postTypeCapabilities($postType);
+        if ($this->requiresPublishCapability($postData) && !current_user_can($caps['publish_posts'])) {
+            throw new ApiException('Forbidden.', 403, 'forbidden');
+        }
+
+        $author = $postData['post_author'] ?? null;
+        if (is_int($author) && $author > 0 && function_exists('get_current_user_id')) {
+            $currentUserId = (int) get_current_user_id();
+            if ($currentUserId > 0 && $author !== $currentUserId && !current_user_can($caps['edit_others_posts'])) {
+                throw new ApiException('Forbidden.', 403, 'forbidden');
+            }
+        }
+    }
+
+    private function assertCanDelete(int $id): void
+    {
+        if (function_exists('current_user_can') && !current_user_can('delete_post', $id)) {
+            throw new ApiException('Forbidden.', 403, 'forbidden');
+        }
+    }
+
+    /**
+     * @param array<string, mixed> $postData
+     */
+    private function requiresPublishCapability(array $postData): bool
+    {
+        $status = (string) ($postData['post_status'] ?? '');
+        return in_array($status, ['publish', 'private', 'future'], true);
+    }
+
+    /**
+     * @return array{edit_posts: string, publish_posts: string, edit_others_posts: string}
+     */
+    private function postTypeCapabilities(string $postType): array
+    {
+        $defaults = [
+            'edit_posts' => 'edit_posts',
+            'publish_posts' => 'publish_posts',
+            'edit_others_posts' => 'edit_others_posts',
+        ];
+
+        if (!function_exists('get_post_type_object')) {
+            return $defaults;
+        }
+
+        $object = get_post_type_object($postType);
+        $cap = is_object($object) ? $object->cap : null;
+        if (!is_object($cap)) {
+            return $defaults;
+        }
+
+        foreach ($defaults as $key => $default) {
+            if (isset($cap->{$key}) && is_string($cap->{$key}) && $cap->{$key} !== '') {
+                $defaults[$key] = $cap->{$key};
+            }
+        }
+
+        return $defaults;
     }
 
     private function isWpError(mixed $value): bool

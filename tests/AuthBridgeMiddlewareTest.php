@@ -11,6 +11,7 @@ use BetterRoute\Middleware\Auth\BearerTokenAuthMiddleware;
 use BetterRoute\Middleware\Auth\BearerTokenVerifierInterface;
 use BetterRoute\Middleware\Auth\ClaimsUserMapperInterface;
 use BetterRoute\Middleware\Auth\CookieNonceAuthMiddleware;
+use BetterRoute\Middleware\Auth\WpClaimsUserMapper;
 use BetterRoute\Middleware\Jwt\JwtAuthMiddleware;
 use BetterRoute\Middleware\Jwt\JwtVerifierInterface;
 use PHPUnit\Framework\TestCase;
@@ -124,6 +125,14 @@ final class AuthBridgeMiddlewareTest extends TestCase
 
         $this->expectException(ApiException::class);
         $middleware->handle($context, static fn () => null);
+    }
+
+    public function testWpClaimsUserMapperDoesNotTrustSubAsUserIdByDefault(): void
+    {
+        $mapper = new WpClaimsUserMapper();
+        $context = new RequestContext('req_claims_mapper', '/secure', new AuthBridgeRequest([]));
+
+        self::assertNull($mapper->mapUserId(['sub' => '12'], $context));
     }
 }
 

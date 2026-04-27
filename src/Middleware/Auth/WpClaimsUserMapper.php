@@ -27,7 +27,7 @@ final class WpClaimsUserMapper implements ClaimsUserMapperInterface
      * @param null|callable(array<string, mixed>, RequestContext): ?int $customResolver
      */
     public function __construct(
-        array $idClaims = ['user_id', 'uid', 'wp_user_id', 'sub'],
+        array $idClaims = ['user_id', 'uid', 'wp_user_id'],
         array $emailClaims = ['email'],
         array $loginClaims = ['username', 'login', 'user_login'],
         ?callable $customResolver = null

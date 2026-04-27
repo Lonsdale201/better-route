@@ -283,17 +283,19 @@ final class WpdbAdapter
 
     private function qualifiedTableName(string $table): string
     {
+        if (str_contains($table, '.')) {
+            throw new RuntimeException('Cross-database table names are not allowed.');
+        }
+
         $resolved = $table;
         $prefix = $this->wpdbPrefix();
-        if ($prefix !== '' && !str_contains($table, '.') && !str_starts_with($table, $prefix)) {
+        if ($prefix !== '' && !str_starts_with($table, $prefix)) {
             $resolved = $prefix . $table;
         }
 
-        foreach (explode('.', $resolved) as $segment) {
-            $this->assertIdentifier($segment, 'table segment');
-        }
+        $this->assertIdentifier($resolved, 'table');
 
-        return implode('.', array_map(fn (string $segment): string => $this->quoteIdentifier($segment), explode('.', $resolved)));
+        return $this->quoteIdentifier($resolved);
     }
 
     private function wpdbPrefix(): string
@@ -322,8 +324,8 @@ final class WpdbAdapter
                 throw new RuntimeException(sprintf('Column "%s" is not allowed.', $column));
             }
             $this->assertIdentifier($column, 'field');
-            if (is_object($value)) {
-                throw new RuntimeException(sprintf('Column "%s" cannot contain object payload.', $column));
+            if (is_object($value) || is_array($value)) {
+                throw new RuntimeException(sprintf('Column "%s" cannot contain structured payload.', $column));
             }
         }
     }

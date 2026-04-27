@@ -119,4 +119,25 @@ final class OpenApiExporterTest extends TestCase
         self::assertArrayHasKey('Error', $document['components']['schemas']);
         self::assertArrayHasKey('Article', $document['components']['schemas']);
     }
+
+    public function testStrictSchemasRejectsMissingReferencedSchema(): void
+    {
+        $exporter = new OpenApiExporter();
+
+        $this->expectException(\InvalidArgumentException::class);
+        $this->expectExceptionMessage('Missing OpenAPI schema "Article"');
+
+        $exporter->export([
+            [
+                'namespace' => 'better-route/v1',
+                'method' => 'GET',
+                'path' => '/articles',
+                'args' => [],
+                'meta' => [
+                    'operationId' => 'articlesList',
+                    'responseSchema' => '#/components/schemas/Article',
+                ],
+            ],
+        ], ['strictSchemas' => true]);
+    }
 }

@@ -14,6 +14,7 @@ Built for headless and integration-heavy projects where you want a stable, versi
   - CPT-backed endpoints
   - custom table-backed endpoints
 - Strict query contract (unknown params -> `400`)
+- Payload schema + field-level write policy for Resource writes
 - Unified error payload with `requestId`
 - Built-in auth bridge middlewares:
   - JWT/Bearer
@@ -22,6 +23,9 @@ Built for headless and integration-heavy projects where you want a stable, versi
 - Write safety middlewares:
   - idempotency key
   - optimistic lock (`If-Match` / version)
+- Read safety/caching helpers:
+  - ETag / `If-None-Match`
+  - identity-aware cache and rate-limit keys
 - Observability baseline:
   - audit event schema
   - metrics middleware
@@ -68,7 +72,11 @@ use BetterRoute\Middleware\Jwt\Hs256JwtVerifier;
 use BetterRoute\Middleware\Auth\WpClaimsUserMapper;
 
 add_action('rest_api_init', function () {
-    $jwt = new Hs256JwtVerifier($_ENV['JWT_SECRET']);
+    $jwt = new Hs256JwtVerifier(
+        secret: $_ENV['JWT_SECRET'],
+        expectedIssuer: 'https://auth.example.com',
+        expectedAudience: 'better-route'
+    );
 
     $router = Router::make('better-route', 'v1')
         ->middlewareFactory(function (string $class) use ($jwt) {
@@ -96,6 +104,7 @@ add_action('rest_api_init', function () {
 
 ```php
 use BetterRoute\Resource\Resource;
+use BetterRoute\Resource\ResourcePolicy;
 
 add_action('rest_api_init', function () {
     Resource::make('articles')
@@ -120,6 +129,16 @@ add_action('rest_api_init', function () {
                 'delete' => 'delete_posts',
             ],
         ])
+        ->fieldPolicy([
+            'status' => ['write' => 'publish_posts'],
+            'author' => ['write' => 'edit_others_posts'],
+        ])
+        ->writeSchema([
+            'title' => ['type' => 'string', 'required' => true, 'minLength' => 3, 'sanitize' => 'text'],
+            'status' => ['type' => 'enum', 'values' => ['draft', 'publish']],
+            'author' => ['type' => 'int', 'min' => 1],
+        ])
+        ->deleteMode('trash')
         ->maxPerPage(100)
         ->maxOffset(5000)
         ->register();
@@ -143,6 +162,12 @@ add_action('rest_api_init', function () {
             'lang' => 'string',
             'published' => 'bool',
         ])
+        ->policy(ResourcePolicy::adminOnly())
+        ->writeSchema([
+            'title' => ['type' => 'string', 'required' => true, 'sanitize' => 'text'],
+            'published' => ['type' => 'bool'],
+            'lang' => ['type' => 'enum', 'values' => ['hu', 'en']],
+        ])
         ->sort(['created_at', 'id'])
         ->maxPerPage(100)
         ->maxOffset(5000)
@@ -163,9 +188,22 @@ add_action('rest_api_init', function () {
 ### Write safety
 
 - `BetterRoute\Middleware\Write\IdempotencyMiddleware`
+- `BetterRoute\Middleware\Write\WpdbIdempotencyStore`
 - `BetterRoute\Middleware\Write\OptimisticLockMiddleware`
 - `BetterRoute\Http\ConflictException` (`409`)
 - `BetterRoute\Http\PreconditionFailedException` (`412`)
+
+### Cache / conditional reads
+
+- `BetterRoute\Middleware\Cache\CachingMiddleware`
+- `BetterRoute\Middleware\Cache\ETagMiddleware`
+
+### Rate limiting
+
+- `BetterRoute\Middleware\RateLimit\RateLimitMiddleware`
+- `BetterRoute\Middleware\RateLimit\TransientRateLimiter`
+- `BetterRoute\Middleware\RateLimit\WpObjectCacheRateLimiter`
+- `BetterRoute\Http\ClientIpResolver`
 
 ### Observability
 
@@ -194,6 +232,7 @@ $openApi = (new OpenApiExporter())->export($contracts, [
     'title' => 'better-route API',
     'version' => 'v0.1.0',
     'serverUrl' => '/wp-json',
+    'strictSchemas' => true,
     'components' => array_replace_recursive(
         BetterRoute::wooOpenApiComponents(),
         [
@@ -202,7 +241,40 @@ $openApi = (new OpenApiExporter())->export($contracts, [
             ],
         ]
     ),
+    // Reusable security definitions, merged into components.securitySchemes
+    'securitySchemes' => [
+        'bearerAuth' => [
+            'type' => 'http',
+            'scheme' => 'bearer',
+            'bearerFormat' => 'JWT',
+        ],
+        'cookieNonce' => [
+            'type' => 'apiKey',
+            'in' => 'header',
+            'name' => 'X-WP-Nonce',
+        ],
+    ],
+    // Document-level default security; per-route meta['security'] overrides.
+    'globalSecurity' => [
+        ['bearerAuth' => []],
+    ],
 ]);
+```
+
+Per-route overrides live in route `meta`:
+
+```php
+$router->get('/public/ping', fn () => ['pong' => true])
+    ->meta([
+        'operationId' => 'publicPing',
+        'security' => [],            // explicit no-auth (overrides globalSecurity)
+    ]);
+
+$router->post('/admin/reset', fn () => ['ok' => true])
+    ->meta([
+        'operationId' => 'adminReset',
+        'security' => [['bearerAuth' => ['admin:write']]],
+    ]);
 ```
 
 ### Register `openapi.json` endpoint
@@ -220,6 +292,8 @@ OpenApiRouteRegistrar::register(
         'title' => 'better-route API',
         'version' => 'v0.1.0',
         'serverUrl' => '/wp-json',
+        // Defaults to manage_options when omitted.
+        'permissionCallback' => static fn (): bool => current_user_can('manage_options'),
     ]
 );
 ```
@@ -238,6 +312,7 @@ add_action('rest_api_init', function () {
     $woo = BetterRoute::wooRouteRegistrar()->register('better-route/v1', [
         'requireHpos' => true, // HPOS-only guard
         'basePath' => 'woo',
+        'deleteMode' => 'trash', // force|trash for orders/products/coupons
         'idempotency' => [
             'enabled' => true,
             'requireKey' => true,
@@ -258,6 +333,21 @@ add_action('rest_api_init', function () {
             'products.create' => 'manage_woocommerce',
             'products.update' => 'manage_woocommerce',
             'products.delete' => 'manage_woocommerce',
+            'customers.list' => 'manage_woocommerce',
+            'customers.get' => 'manage_woocommerce',
+            'customers.create' => 'manage_woocommerce',
+            'customers.update' => 'manage_woocommerce',
+            'customers.delete' => 'manage_woocommerce',
+            'coupons.list' => 'manage_woocommerce',
+            'coupons.get' => 'manage_woocommerce',
+            'coupons.create' => 'manage_woocommerce',
+            'coupons.update' => 'manage_woocommerce',
+            'coupons.delete' => 'manage_woocommerce',
+        ],
+        // Optional — restrict which CRUD actions each resource exposes.
+        // Omit a key to get the full `['list', 'get', 'create', 'update', 'delete']` set.
+        'actions' => [
+            'customers' => ['list', 'get'], // read-only customers, full CRUD elsewhere
         ],
     ]);
 
@@ -268,10 +358,14 @@ add_action('rest_api_init', function () {
 ```
 
 Registered endpoints under `/wp-json/<vendor>/<version>/woo`:
+
 - orders: `list`, `get`, `create`, `update` (`PUT`/`PATCH`), `delete`
 - products: `list`, `get`, `create`, `update` (`PUT`/`PATCH`), `delete`
+- customers: `list`, `get`, `create`, `update` (`PUT`/`PATCH`), `delete`
+- coupons: `list`, `get`, `create`, `update` (`PUT`/`PATCH`), `delete`
 
 When idempotency is enabled, write routes document and accept `Idempotency-Key` header, and may return:
+
 - `409` for `idempotency_conflict`
 - `400` for `idempotency_key_required` (if `requireKey=true`)
 
@@ -303,3 +397,40 @@ composer cs-check
 ## Current Status
 
 Active development.
+
+## Changelog
+
+### 0.3.0
+
+Security and hardening:
+
+- Fixed route `id` handling so resource and Woo endpoints prefer URL route parameters over merged request parameters.
+- Hardened error responses so unexpected server errors no longer expose internal exception messages or classes.
+- Hardened JWT handling with required `exp` by default, optional issuer/audience checks, max lifetime, and max token size.
+- Removed default numeric `sub` to WP user ID mapping from `WpClaimsUserMapper`.
+- Made custom table resource reads deny-by-default unless an explicit policy is configured.
+- Made cache, idempotency, and rate-limit default keys identity-aware.
+- Restricted Woo customer endpoints to customer users and added user capability checks for create/update/delete operations.
+- Protected Woo meta keys (`_...`) are no longer writable or returned by default.
+- Hardened CPT writes with WordPress capability checks around publish/status/author/delete operations.
+- Hardened `WpdbAdapter` by rejecting cross-database table names and structured write payloads.
+- OpenAPI document route now defaults to `manage_options` instead of public access.
+- Sanitized accepted `X-Request-ID` values.
+
+New features:
+
+- Added Resource `writeSchema()` / `payloadSchema()` for write validation, coercion, sanitization, required fields, ranges, lengths, regex, enum, email, and URL checks.
+- Added Resource `fieldPolicy()` for field-level write authorization.
+- Added `ResourcePolicy` presets: `adminOnly()`, `publicReadPrivateWrite()`, `capabilities()`, and `callbacks()`.
+- Added `deleteMode('trash'|'force')` for CPT resources.
+- Added Woo `deleteMode` option for orders, products, and coupons.
+- Added strict OpenAPI schema mode via `strictSchemas => true`.
+- Added `ETagMiddleware` with `If-None-Match` / `304 Not Modified` support.
+- Added `ClientIpResolver` with trusted proxy support.
+- Added `WpObjectCacheRateLimiter`.
+- Added `WpdbIdempotencyStore`.
+
+Developer experience:
+
+- Composer scripts now run tools through `php vendor/bin/...`, avoiding executable-bit issues on some deployments.
+- Expanded regression coverage for security defaults, resource validation, OpenAPI strict mode, ETag handling, and WP-backed stores.
