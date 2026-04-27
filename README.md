@@ -358,12 +358,14 @@ add_action('rest_api_init', function () {
 ```
 
 Registered endpoints under `/wp-json/<vendor>/<version>/woo`:
+
 - orders: `list`, `get`, `create`, `update` (`PUT`/`PATCH`), `delete`
 - products: `list`, `get`, `create`, `update` (`PUT`/`PATCH`), `delete`
 - customers: `list`, `get`, `create`, `update` (`PUT`/`PATCH`), `delete`
 - coupons: `list`, `get`, `create`, `update` (`PUT`/`PATCH`), `delete`
 
 When idempotency is enabled, write routes document and accept `Idempotency-Key` header, and may return:
+
 - `409` for `idempotency_conflict`
 - `400` for `idempotency_key_required` (if `requireKey=true`)
 
@@ -395,3 +397,40 @@ composer cs-check
 ## Current Status
 
 Active development.
+
+## Changelog
+
+### 0.3.0
+
+Security and hardening:
+
+- Fixed route `id` handling so resource and Woo endpoints prefer URL route parameters over merged request parameters.
+- Hardened error responses so unexpected server errors no longer expose internal exception messages or classes.
+- Hardened JWT handling with required `exp` by default, optional issuer/audience checks, max lifetime, and max token size.
+- Removed default numeric `sub` to WP user ID mapping from `WpClaimsUserMapper`.
+- Made custom table resource reads deny-by-default unless an explicit policy is configured.
+- Made cache, idempotency, and rate-limit default keys identity-aware.
+- Restricted Woo customer endpoints to customer users and added user capability checks for create/update/delete operations.
+- Protected Woo meta keys (`_...`) are no longer writable or returned by default.
+- Hardened CPT writes with WordPress capability checks around publish/status/author/delete operations.
+- Hardened `WpdbAdapter` by rejecting cross-database table names and structured write payloads.
+- OpenAPI document route now defaults to `manage_options` instead of public access.
+- Sanitized accepted `X-Request-ID` values.
+
+New features:
+
+- Added Resource `writeSchema()` / `payloadSchema()` for write validation, coercion, sanitization, required fields, ranges, lengths, regex, enum, email, and URL checks.
+- Added Resource `fieldPolicy()` for field-level write authorization.
+- Added `ResourcePolicy` presets: `adminOnly()`, `publicReadPrivateWrite()`, `capabilities()`, and `callbacks()`.
+- Added `deleteMode('trash'|'force')` for CPT resources.
+- Added Woo `deleteMode` option for orders, products, and coupons.
+- Added strict OpenAPI schema mode via `strictSchemas => true`.
+- Added `ETagMiddleware` with `If-None-Match` / `304 Not Modified` support.
+- Added `ClientIpResolver` with trusted proxy support.
+- Added `WpObjectCacheRateLimiter`.
+- Added `WpdbIdempotencyStore`.
+
+Developer experience:
+
+- Composer scripts now run tools through `php vendor/bin/...`, avoiding executable-bit issues on some deployments.
+- Expanded regression coverage for security defaults, resource validation, OpenAPI strict mode, ETag handling, and WP-backed stores.
