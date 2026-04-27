@@ -38,7 +38,7 @@ From public GitHub via Composer (`type: vcs`):
 ```json
 {
   "require": {
-    "better-route/better-route": "^0.1.1"
+    "better-route/better-route": "^0.3.0"
   },
   "repositories": [
     {
