@@ -6,6 +6,8 @@ A thin PHP 8.1+ REST routing and resource library for WordPress.
 
 Built for headless and integration-heavy projects where you want a stable, versioned API contract on top of WP.
 
+Supports PHP 8.1+ and is tested against WordPress 6.9 stubs. WooCommerce support is optional and tested against WooCommerce 10.6 stubs.
+
 ## What It Gives You
 
 - Fluent REST router on top of `register_rest_route()`
@@ -38,7 +40,7 @@ From public GitHub via Composer (`type: vcs`):
 ```json
 {
   "require": {
-    "better-route/better-route": "^0.1.1"
+    "better-route/better-route": "^0.4.0"
   },
   "repositories": [
     {
@@ -62,6 +64,15 @@ add_action('rest_api_init', function () {
         ->meta(['operationId' => 'ping', 'tags' => ['System']]);
 });
 ```
+
+`GET` routes are public by default. Write routes (`POST`, `PUT`, `PATCH`, `DELETE`)
+deny by default unless you explicitly call `->permission(...)`,
+`->protectedByMiddleware()`, or `->publicRoute()`.
+
+WordPress validates and sanitizes registered REST `args` before
+`permission_callback` runs. Keep `->args()` callbacks cheap and side-effect free.
+Use handler-level validation or Resource `writeSchema()` for expensive payload
+checks that must happen after authorization.
 
 ## Router + Middleware Example
 
@@ -92,6 +103,10 @@ add_action('rest_api_init', function () {
 
         $r->get('/me', fn () => ['ok' => true])
             ->meta(['operationId' => 'secureMe', 'tags' => ['Auth']]);
+
+        $r->post('/articles', fn () => ['created' => true])
+            ->protectedByMiddleware('bearerAuth')
+            ->meta(['operationId' => 'secureCreateArticle', 'tags' => ['Auth']]);
     });
 
     $router->register();
@@ -230,7 +245,7 @@ $contracts = array_merge(
 
 $openApi = (new OpenApiExporter())->export($contracts, [
     'title' => 'better-route API',
-    'version' => 'v0.1.0',
+    'version' => 'v0.4.0',
     'serverUrl' => '/wp-json',
     'strictSchemas' => true,
     'components' => array_replace_recursive(
@@ -271,6 +286,7 @@ $router->get('/public/ping', fn () => ['pong' => true])
     ]);
 
 $router->post('/admin/reset', fn () => ['ok' => true])
+    ->protectedByMiddleware('bearerAuth')
     ->meta([
         'operationId' => 'adminReset',
         'security' => [['bearerAuth' => ['admin:write']]],
@@ -290,7 +306,7 @@ OpenApiRouteRegistrar::register(
     ]),
     options: [
         'title' => 'better-route API',
-        'version' => 'v0.1.0',
+        'version' => 'v0.4.0',
         'serverUrl' => '/wp-json',
         // Defaults to manage_options when omitted.
         'permissionCallback' => static fn (): bool => current_user_can('manage_options'),
@@ -399,6 +415,13 @@ composer cs-check
 Active development.
 
 ## Changelog
+
+### 0.4.0
+
+Security and route intent:
+
+- Made raw Router write routes deny-by-default unless `permission()`, `protectedByMiddleware()`, or `publicRoute()` is explicit.
+- Added explicit route intent helpers: `protectedByMiddleware()` for middleware-authenticated routes and `publicRoute()` for intentionally public routes.
 
 ### 0.3.0
 

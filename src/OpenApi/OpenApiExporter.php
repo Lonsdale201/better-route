@@ -522,7 +522,11 @@ final class OpenApiExporter
      */
     private function normalizeSecurity(mixed $security, array $scopes): ?array
     {
-        if (is_array($security) && $security !== []) {
+        if (is_array($security)) {
+            if ($security === []) {
+                return [];
+            }
+
             $normalized = [];
             foreach ($security as $entry) {
                 if (is_array($entry)) {

@@ -27,11 +27,14 @@ final class RouteMeta
         $requestSchema = self::stringOrNull($meta['requestSchema'] ?? null);
         $responseSchema = self::stringOrNull($meta['responseSchema'] ?? null);
         $openApiInclude = self::boolOrDefault($meta['openapi']['include'] ?? null, true);
+        $hasSecurity = array_key_exists('security', $meta);
+        $security = $meta['security'] ?? null;
 
         $known = [
             'operationId',
             'tags',
             'scopes',
+            'security',
             'parameters',
             'responses',
             'requestSchema',
@@ -46,7 +49,7 @@ final class RouteMeta
             }
         }
 
-        return array_merge($extensions, [
+        $normalized = array_merge($extensions, [
             'operationId' => $operationId,
             'tags' => $tags,
             'scopes' => $scopes,
@@ -58,6 +61,12 @@ final class RouteMeta
                 'include' => $openApiInclude,
             ],
         ]);
+
+        if ($hasSecurity) {
+            $normalized['security'] = $security;
+        }
+
+        return $normalized;
     }
 
     private static function defaultOperationId(string $method, string $uri): string
