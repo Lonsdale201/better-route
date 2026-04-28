@@ -155,7 +155,7 @@ final class Router
         foreach ($this->routes as $route) {
             $permission = is_callable($route->permissionCallback)
                 ? $route->permissionCallback
-                : static fn (): bool => true;
+                : $this->defaultPermissionForRoute($route);
 
             $dispatcher->register(
                 namespace: $this->baseNamespace(),
@@ -164,6 +164,13 @@ final class Router
                 permissionCallback: $permission
             );
         }
+    }
+
+    private function defaultPermissionForRoute(RouteDefinition $route): callable
+    {
+        return $route->method === 'GET'
+            ? static fn (): bool => true
+            : static fn (): bool => false;
     }
 
     /**

@@ -140,4 +140,29 @@ final class OpenApiExporterTest extends TestCase
             ],
         ], ['strictSchemas' => true]);
     }
+
+    public function testEmptyOperationSecurityOverridesGlobalSecurity(): void
+    {
+        $exporter = new OpenApiExporter();
+
+        $document = $exporter->export([
+            [
+                'namespace' => 'better-route/v1',
+                'method' => 'GET',
+                'path' => '/public/ping',
+                'args' => [],
+                'meta' => [
+                    'operationId' => 'publicPing',
+                    'security' => [],
+                ],
+            ],
+        ], [
+            'globalSecurity' => [
+                ['bearerAuth' => []],
+            ],
+        ]);
+
+        self::assertSame([['bearerAuth' => []]], $document['security']);
+        self::assertSame([], $document['paths']['/better-route/v1/public/ping']['get']['security']);
+    }
 }

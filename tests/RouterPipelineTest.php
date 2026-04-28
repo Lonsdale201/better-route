@@ -129,6 +129,47 @@ final class RouterPipelineTest extends TestCase
         self::assertFalse(($registration['permissionCallback'])());
     }
 
+    public function testWriteRoutesDenyByDefault(): void
+    {
+        $router = Router::make('better-route', 'v1');
+        $router->post('/items', static fn (): array => ['ok' => true]);
+
+        $dispatcher = new InMemoryDispatcher();
+        $router->register($dispatcher);
+        $registration = $dispatcher->registrations[0];
+
+        self::assertFalse(($registration['permissionCallback'])());
+    }
+
+    public function testWriteRoutesCanExplicitlyDeferProtectionToMiddleware(): void
+    {
+        $router = Router::make('better-route', 'v1');
+        $router->post('/items', static fn (): array => ['ok' => true])
+            ->protectedByMiddleware('bearerAuth');
+
+        $dispatcher = new InMemoryDispatcher();
+        $router->register($dispatcher);
+        $registration = $dispatcher->registrations[0];
+
+        self::assertTrue(($registration['permissionCallback'])());
+        self::assertSame('bearerAuth', $registration['route']->meta['security']);
+        self::assertTrue($registration['route']->meta['protectedByMiddleware']);
+    }
+
+    public function testRoutesCanBeExplicitlyPublic(): void
+    {
+        $router = Router::make('better-route', 'v1');
+        $router->post('/webhook', static fn (): array => ['ok' => true])
+            ->publicRoute();
+
+        $dispatcher = new InMemoryDispatcher();
+        $router->register($dispatcher);
+        $registration = $dispatcher->registrations[0];
+
+        self::assertTrue(($registration['permissionCallback'])());
+        self::assertSame([], $registration['route']->meta['security']);
+    }
+
     public function testMiddlewareFactoryResolvesConstructorDependencies(): void
     {
         $trace = [];

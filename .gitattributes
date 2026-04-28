@@ -4,6 +4,8 @@
 /phpunit.xml.dist export-ignore
 /.php-cs-fixer.php export-ignore
 /.php-cs-fixer.cache export-ignore
+/composer.lock export-ignore
+/.gitignore export-ignore
 /CONTRACT.md export-ignore
 /DEVELOPMENT_BLUEPRINT.md export-ignore
 /docs export-ignore

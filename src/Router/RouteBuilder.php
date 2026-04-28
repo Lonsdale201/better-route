@@ -44,4 +44,31 @@ final class RouteBuilder
         $this->router->setRoutePermission($this->routeIndex, $permissionCallback);
         return $this;
     }
+
+    /**
+     * Mark the route as intentionally public at the WordPress permission layer.
+     */
+    public function publicRoute(): self
+    {
+        $this->permission(static fn (): bool => true);
+        return $this->meta(['security' => []]);
+    }
+
+    /**
+     * Let WordPress dispatch the route so better-route middleware can
+     * authenticate, authorize, or short-circuit the request.
+     *
+     * @param list<array<string, list<string>>>|string|null $security
+     */
+    public function protectedByMiddleware(array|string|null $security = null): self
+    {
+        $this->permission(static fn (): bool => true);
+        $this->meta(['protectedByMiddleware' => true]);
+
+        if ($security !== null) {
+            $this->meta(['security' => $security]);
+        }
+
+        return $this;
+    }
 }
