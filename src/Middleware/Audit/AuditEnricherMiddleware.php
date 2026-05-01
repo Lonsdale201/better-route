@@ -7,6 +7,7 @@ namespace BetterRoute\Middleware\Audit;
 use BetterRoute\Http\ClientIpResolver;
 use BetterRoute\Http\RequestContext;
 use BetterRoute\Middleware\MiddlewareInterface;
+use BetterRoute\Middleware\Network\ClientIpResolverInterface;
 
 final class AuditEnricherMiddleware implements MiddlewareInterface
 {
@@ -15,7 +16,7 @@ final class AuditEnricherMiddleware implements MiddlewareInterface
      */
     public function __construct(
         private readonly array $staticFields = [],
-        private readonly ?ClientIpResolver $clientIpResolver = null,
+        private readonly ClientIpResolver|ClientIpResolverInterface|null $clientIpResolver = null,
         private readonly bool $includeClientIp = false
     ) {
     }
@@ -29,7 +30,7 @@ final class AuditEnricherMiddleware implements MiddlewareInterface
         }
 
         if ($this->includeClientIp) {
-            $clientIp = ($this->clientIpResolver ?? new ClientIpResolver())->resolve();
+            $clientIp = $this->resolveClientIp($context);
             if ($clientIp !== null) {
                 $extra['clientIp'] = $clientIp;
             }
@@ -76,5 +77,15 @@ final class AuditEnricherMiddleware implements MiddlewareInterface
 
         $value = trim($value);
         return $value !== '' ? $value : null;
+    }
+
+    private function resolveClientIp(RequestContext $context): ?string
+    {
+        $resolver = $this->clientIpResolver ?? new ClientIpResolver();
+        if ($resolver instanceof ClientIpResolverInterface) {
+            return $resolver->resolve($context->request);
+        }
+
+        return $resolver->resolve();
     }
 }

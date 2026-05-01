@@ -4,6 +4,8 @@ declare(strict_types=1);
 
 namespace BetterRoute\Http;
 
+use BetterRoute\Middleware\Network\TrustedProxyClientIpResolver;
+
 final class ClientIpResolver
 {
     /**
@@ -22,49 +24,23 @@ final class ClientIpResolver
     public function resolve(?array $server = null): ?string
     {
         $server ??= $_SERVER;
-        $remoteAddr = $this->stringOrNull($server['REMOTE_ADDR'] ?? null);
-        if ($remoteAddr === null) {
-            return null;
-        }
+        $resolver = new TrustedProxyClientIpResolver(
+            trustedProxyCidrs: $this->trustedProxies,
+            forwardedHeaders: $this->trustedHeaders(),
+            serverResolver: static fn (): array => $server
+        );
 
-        if (!$this->isTrustedProxy($remoteAddr)) {
-            return $remoteAddr;
-        }
-
-        foreach ($this->trustedHeaders as $header) {
-            $value = $this->stringOrNull($server[$header] ?? null);
-            if ($value === null) {
-                continue;
-            }
-
-            $candidate = $this->firstIpFromHeader($value);
-            if ($candidate !== null) {
-                return $candidate;
-            }
-        }
-
-        return $remoteAddr;
+        return $resolver->resolve();
     }
 
-    private function isTrustedProxy(string $remoteAddr): bool
+    /**
+     * @return list<string>
+     */
+    private function trustedHeaders(): array
     {
-        return in_array($remoteAddr, $this->trustedProxies, true);
-    }
-
-    private function firstIpFromHeader(string $value): ?string
-    {
-        foreach (explode(',', $value) as $part) {
-            $candidate = trim($part);
-            if ($candidate !== '' && filter_var($candidate, FILTER_VALIDATE_IP) !== false) {
-                return $candidate;
-            }
-        }
-
-        return null;
-    }
-
-    private function stringOrNull(mixed $value): ?string
-    {
-        return is_string($value) && $value !== '' ? $value : null;
+        return array_values(array_map(
+            static fn (string $header): string => TrustedProxyClientIpResolver::headerNameFromServer($header),
+            $this->trustedHeaders
+        ));
     }
 }

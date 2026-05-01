@@ -285,7 +285,8 @@ final class Router
         $context = new RequestContext(
             requestId: $this->resolveRequestId($request),
             routePath: $route->uri,
-            request: $request
+            request: $request,
+            attributes: ['routeMeta' => $route->meta]
         );
 
         try {

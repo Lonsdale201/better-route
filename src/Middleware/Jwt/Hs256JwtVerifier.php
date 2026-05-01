@@ -4,6 +4,7 @@ declare(strict_types=1);
 
 namespace BetterRoute\Middleware\Jwt;
 
+use BetterRoute\Support\Crypto;
 use RuntimeException;
 
 final class Hs256JwtVerifier implements JwtVerifierInterface
@@ -60,7 +61,7 @@ final class Hs256JwtVerifier implements JwtVerifierInterface
         $expected = $this->sign($encodedHeader . '.' . $encodedPayload);
         $signature = $this->decodeRaw($encodedSignature);
 
-        if (!hash_equals($expected, $signature)) {
+        if (!Crypto::equals($expected, $signature)) {
             throw new RuntimeException('Invalid JWT signature.');
         }
 
@@ -92,18 +93,7 @@ final class Hs256JwtVerifier implements JwtVerifierInterface
 
     private function decodeRaw(string $part): string
     {
-        $normalized = strtr($part, '-_', '+/');
-        $padding = strlen($normalized) % 4;
-        if ($padding > 0) {
-            $normalized .= str_repeat('=', 4 - $padding);
-        }
-
-        $decoded = base64_decode($normalized, true);
-        if ($decoded === false) {
-            throw new RuntimeException('Invalid JWT base64 payload.');
-        }
-
-        return $decoded;
+        return Crypto::base64UrlDecode($part);
     }
 
     /**

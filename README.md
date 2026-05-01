@@ -21,11 +21,17 @@ Supports PHP 8.1+ and is tested against WordPress 6.9 stubs. WooCommerce support
 - Unified error payload with `requestId`
 - Built-in auth bridge middlewares:
   - JWT/Bearer
+  - RS256/ES256 JWKS verifier
+  - HMAC request signatures
   - cookie + nonce
   - application password
 - Write safety middlewares:
   - idempotency key
+  - single-use token consume
   - optimistic lock (`If-Match` / version)
+- Network hardening:
+  - trusted-proxy IP resolution
+  - CIDR allowlist middleware
 - Read safety/caching helpers:
   - ETag / `If-None-Match`
   - identity-aware cache and rate-limit keys
@@ -41,7 +47,7 @@ From public GitHub via Composer (`type: vcs`):
 ```json
 {
   "require": {
-    "better-route/better-route": "^0.5.0"
+    "better-route/better-route": "^0.6.0"
   },
   "repositories": [
     {
@@ -196,7 +202,12 @@ add_action('rest_api_init', function () {
 ### Auth bridge
 
 - `BetterRoute\Middleware\Jwt\JwtAuthMiddleware`
+- `BetterRoute\Middleware\Jwt\Rs256JwksJwtVerifier`
+- `BetterRoute\Middleware\Jwt\HttpJwksProvider`
+- `BetterRoute\Middleware\Jwt\StaticJwksProvider`
 - `BetterRoute\Middleware\Auth\BearerTokenAuthMiddleware`
+- `BetterRoute\Middleware\Auth\HmacSignatureMiddleware`
+- `BetterRoute\Middleware\Auth\ArrayHmacSecretProvider`
 - `BetterRoute\Middleware\Auth\CookieNonceAuthMiddleware`
 - `BetterRoute\Middleware\Auth\ApplicationPasswordAuthMiddleware`
 - `BetterRoute\Middleware\Auth\WpClaimsUserMapper`
@@ -209,6 +220,10 @@ add_action('rest_api_init', function () {
 - `BetterRoute\Middleware\Write\AtomicIdempotencyMiddleware`
 - `BetterRoute\Middleware\Write\ArrayAtomicIdempotencyStore`
 - `BetterRoute\Middleware\Write\WpdbAtomicIdempotencyStore`
+- `BetterRoute\Middleware\Write\SingleUseTokenMiddleware`
+- `BetterRoute\Middleware\Write\ArraySingleUseTokenStore`
+- `BetterRoute\Middleware\Write\WpdbSingleUseTokenStore`
+- `BetterRoute\Middleware\Write\WpCacheSingleUseTokenStore`
 - `BetterRoute\Middleware\Write\OptimisticLockMiddleware`
 - `BetterRoute\Http\ConflictException` (`409`)
 - `BetterRoute\Http\PreconditionFailedException` (`412`)
@@ -229,6 +244,14 @@ add_action('rest_api_init', function () {
 - `BetterRoute\Middleware\RateLimit\TransientRateLimiter`
 - `BetterRoute\Middleware\RateLimit\WpObjectCacheRateLimiter`
 - `BetterRoute\Http\ClientIpResolver`
+- `BetterRoute\Middleware\Network\TrustedProxyClientIpResolver`
+- `BetterRoute\Middleware\Network\IpAllowlistMiddleware`
+
+### Support
+
+- `BetterRoute\Support\Crypto`
+- `BetterRoute\Support\CryptoEncoding`
+- `BetterRoute\Http\OAuthErrorNormalizer`
 
 ### Observability
 
@@ -426,6 +449,23 @@ composer cs-check
 Active development.
 
 ## Changelog
+
+### 0.6.0
+
+Security and auth primitives for integration-heavy REST APIs. Full details and usage examples live in the docs: [Release notes — v0.6.0](https://lonsdale201.github.io/better-docs/docs/better-route/release-notes/v0.6.0).
+
+- Added `Rs256JwksJwtVerifier` for `RS256` and `ES256` JWTs backed by JWKS, with strict JOSE `kid` matching, explicit algorithm allowlisting, issuer/audience/time claim validation, and rejection of `none`/`HS*` algorithms.
+- Added `JwksProviderInterface`, `HttpJwksProvider`, and `StaticJwksProvider`. HTTP fetches require `https`, use `sslverify => true`, cache through transients, strip private JWK fields defensively, and support `better_route/jwks_refresh` cache invalidation.
+- Added `BetterRoute\Support\Crypto` and `CryptoEncoding` for CSPRNG token generation, hex/base64/base64url encoding, strict base64url decoding, and constant-time string comparison.
+- Added `TrustedProxyClientIpResolver`, `ClientIpResolverInterface`, `CidrMatcher`, and `IpAllowlistMiddleware` for IPv4/IPv6 CIDR matching and trusted-proxy aware client IP resolution.
+- Added `HmacSignatureMiddleware`, `HmacSecretProviderInterface`, and `ArrayHmacSecretProvider` for multi-key request signature verification with timestamp replay-window enforcement.
+- Added `SingleUseTokenMiddleware`, `SingleUseTokenStoreInterface`, `ArraySingleUseTokenStore`, `WpdbSingleUseTokenStore`, and `WpCacheSingleUseTokenStore` for atomic one-time token consumption. Token values are hashed before storage helpers are used.
+- Added `OAuthErrorNormalizer` and route-level `->meta(['error_format' => 'oauth_rfc6749'])` support for OAuth-style error responses.
+- `Hs256JwtVerifier` now uses the shared `Crypto` helper for constant-time signature comparison and base64url decoding.
+- `Http\ClientIpResolver` delegates internally to the hardened trusted-proxy resolver while preserving its existing constructor and `resolve(?array $server = null)` API.
+- `RateLimitMiddleware` accepts either the legacy `Http\ClientIpResolver` or the new `Middleware\Network\ClientIpResolverInterface`.
+- `Router` now passes normalized route metadata into `RequestContext` attributes as `routeMeta`, enabling route-scoped normalizers without changing handler signatures.
+- Updated `Support\Version::VERSION` to `0.6.0-dev`.
 
 ### 0.5.0
 

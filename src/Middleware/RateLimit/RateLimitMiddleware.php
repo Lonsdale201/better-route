@@ -9,6 +9,7 @@ use BetterRoute\Http\ClientIpResolver;
 use BetterRoute\Http\RequestContext;
 use BetterRoute\Http\Response;
 use BetterRoute\Middleware\MiddlewareInterface;
+use BetterRoute\Middleware\Network\ClientIpResolverInterface;
 
 final class RateLimitMiddleware implements MiddlewareInterface
 {
@@ -23,7 +24,7 @@ final class RateLimitMiddleware implements MiddlewareInterface
         private readonly int $limit = 60,
         private readonly int $windowSeconds = 60,
         ?callable $keyResolver = null,
-        private readonly ?ClientIpResolver $clientIpResolver = null
+        private readonly ClientIpResolver|ClientIpResolverInterface|null $clientIpResolver = null
     ) {
         $this->keyResolver = $keyResolver ?? fn (RequestContext $context): string => $context->routePath . '|' . $this->identityKey($context);
     }
@@ -85,11 +86,21 @@ final class RateLimitMiddleware implements MiddlewareInterface
             }
         }
 
-        $clientIp = ($this->clientIpResolver ?? new ClientIpResolver())->resolve();
+        $clientIp = $this->resolveClientIp($context);
         if ($clientIp !== null) {
             return 'ip:' . $clientIp;
         }
 
         return 'guest';
+    }
+
+    private function resolveClientIp(RequestContext $context): ?string
+    {
+        $resolver = $this->clientIpResolver ?? new ClientIpResolver();
+        if ($resolver instanceof ClientIpResolverInterface) {
+            return $resolver->resolve($context->request);
+        }
+
+        return $resolver->resolve();
     }
 }
