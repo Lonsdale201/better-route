@@ -7,7 +7,8 @@ namespace BetterRoute\Http;
 final class ResponseNormalizer
 {
     public function __construct(
-        private readonly ErrorNormalizer $errorNormalizer = new ErrorNormalizer()
+        private readonly ErrorNormalizer $errorNormalizer = new ErrorNormalizer(),
+        private readonly OAuthErrorNormalizer $oauthErrorNormalizer = new OAuthErrorNormalizer()
     ) {
     }
 
@@ -22,6 +23,10 @@ final class ResponseNormalizer
         }
 
         if ($this->isWpError($result)) {
+            if ($this->usesOAuthErrorFormat($context)) {
+                return $this->oauthErrorNormalizer->fromWpError($result, $context->requestId);
+            }
+
             return $this->errorNormalizer->fromWpError($result, $context->requestId);
         }
 
@@ -30,7 +35,17 @@ final class ResponseNormalizer
 
     public function throwable(\Throwable $throwable, RequestContext $context): Response
     {
+        if ($this->usesOAuthErrorFormat($context)) {
+            return $this->oauthErrorNormalizer->fromThrowable($throwable, $context->requestId);
+        }
+
         return $this->errorNormalizer->fromThrowable($throwable, $context->requestId);
+    }
+
+    private function usesOAuthErrorFormat(RequestContext $context): bool
+    {
+        $routeMeta = $context->attributes['routeMeta'] ?? null;
+        return is_array($routeMeta) && ($routeMeta['error_format'] ?? null) === 'oauth_rfc6749';
     }
 
     private function isWpError(mixed $value): bool
