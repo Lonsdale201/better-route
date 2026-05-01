@@ -31,7 +31,8 @@ final class AuditMiddleware implements MiddlewareInterface
                 context: $context,
                 method: $this->requestMethod($context->request),
                 statusCode: $statusCode,
-                durationMs: $this->durationMs($startedAt)
+                durationMs: $this->durationMs($startedAt),
+                extra: $this->auditExtra($context)
             ));
 
             return $result;
@@ -42,7 +43,8 @@ final class AuditMiddleware implements MiddlewareInterface
                 statusCode: $throwable instanceof ApiException ? $throwable->status() : 500,
                 errorCode: $throwable instanceof ApiException ? $throwable->errorCode() : 'internal_error',
                 errorMessage: $throwable->getMessage(),
-                durationMs: $this->durationMs($startedAt)
+                durationMs: $this->durationMs($startedAt),
+                extra: $this->auditExtra($context)
             ));
 
             throw $throwable;
@@ -84,5 +86,14 @@ final class AuditMiddleware implements MiddlewareInterface
         }
 
         return 200;
+    }
+
+    /**
+     * @return array<string, mixed>
+     */
+    private function auditExtra(RequestContext $context): array
+    {
+        $extra = $context->attributes['audit'] ?? [];
+        return is_array($extra) ? $extra : [];
     }
 }

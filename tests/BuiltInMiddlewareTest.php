@@ -8,11 +8,14 @@ use BetterRoute\Http\ApiException;
 use BetterRoute\Http\ClientIpResolver;
 use BetterRoute\Http\RequestContext;
 use BetterRoute\Http\Response;
+use BetterRoute\Middleware\Audit\AuditEnricherMiddleware;
 use BetterRoute\Middleware\Audit\AuditLoggerInterface;
 use BetterRoute\Middleware\Audit\AuditMiddleware;
 use BetterRoute\Middleware\Cache\CacheStoreInterface;
 use BetterRoute\Middleware\Cache\CachingMiddleware;
 use BetterRoute\Middleware\Cache\ETagMiddleware;
+use BetterRoute\Middleware\Cors\CorsMiddleware;
+use BetterRoute\Middleware\Cors\CorsPolicy;
 use BetterRoute\Middleware\Jwt\JwtAuthMiddleware;
 use BetterRoute\Middleware\Jwt\JwtVerifierInterface;
 use BetterRoute\Middleware\RateLimit\RateLimiterInterface;
@@ -62,6 +65,51 @@ final class BuiltInMiddlewareTest extends TestCase
         self::assertInstanceOf(Response::class, $response);
         self::assertSame('10', $response->headers['X-RateLimit-Limit']);
         self::assertSame('5', $response->headers['X-RateLimit-Remaining']);
+    }
+
+    public function testRateLimitMiddlewareWrapsArrayResponsesWithHeaders(): void
+    {
+        $middleware = new RateLimitMiddleware(
+            limiter: new FakeRateLimiter(new RateLimitResult(true, 4, 1730000000)),
+            limit: 10,
+            windowSeconds: 60
+        );
+
+        $context = new RequestContext('req_rate_array', '/rate', new MiddlewareRequest([]));
+        $response = $middleware->handle($context, static fn (): array => ['ok' => true]);
+
+        self::assertInstanceOf(Response::class, $response);
+        self::assertSame(['ok' => true], $response->body);
+        self::assertSame('4', $response->headers['X-RateLimit-Remaining']);
+    }
+
+    public function testCorsMiddlewareHandlesPreflightAndAddsHeaders(): void
+    {
+        $middleware = new CorsMiddleware(new CorsPolicy(
+            allowedOrigins: ['https://app.example.com'],
+            allowCredentials: true
+        ));
+
+        $preflight = new RequestContext('req_cors_preflight', '/items', new MiddlewareRequest([
+            'origin' => 'https://app.example.com',
+            'access-control-request-method' => 'POST',
+        ], 'OPTIONS'));
+
+        $response = $middleware->handle($preflight, static fn (): array => ['shouldNotRun' => true]);
+
+        self::assertInstanceOf(Response::class, $response);
+        self::assertSame(204, $response->status);
+        self::assertSame('https://app.example.com', $response->headers['Access-Control-Allow-Origin']);
+        self::assertSame('true', $response->headers['Access-Control-Allow-Credentials']);
+
+        $normal = new RequestContext('req_cors_get', '/items', new MiddlewareRequest([
+            'origin' => 'https://app.example.com',
+        ], 'GET'));
+        $normalResponse = $middleware->handle($normal, static fn (): array => ['ok' => true]);
+
+        self::assertInstanceOf(Response::class, $normalResponse);
+        self::assertSame(['ok' => true], $normalResponse->body);
+        self::assertSame('https://app.example.com', $normalResponse->headers['Access-Control-Allow-Origin']);
     }
 
     public function testCachingMiddlewareCachesGetResponses(): void
@@ -174,6 +222,29 @@ final class BuiltInMiddlewareTest extends TestCase
         self::assertCount(2, $logger->events);
         self::assertSame('ok', $logger->events[0]['status']);
         self::assertSame('error', $logger->events[1]['status']);
+    }
+
+    public function testAuditEnricherAddsSafeContextFields(): void
+    {
+        $logger = new FakeAuditLogger();
+        $enricher = new AuditEnricherMiddleware(['resource' => 'orders']);
+        $audit = new AuditMiddleware($logger);
+        $context = new RequestContext(
+            'req_audit_extra',
+            '/orders',
+            new MiddlewareRequest(['idempotency-key' => 'raw-key'], 'POST'),
+            ['auth' => ['provider' => 'jwt', 'userId' => 42]]
+        );
+
+        $enricher->handle($context, static fn (RequestContext $ctx): mixed => $audit->handle(
+            $ctx,
+            static fn (): Response => new Response(['ok' => true], 200)
+        ));
+
+        self::assertSame('jwt', $logger->events[0]['authProvider']);
+        self::assertSame(42, $logger->events[0]['authUserId']);
+        self::assertSame('orders', $logger->events[0]['resource']);
+        self::assertSame(sha1('raw-key'), $logger->events[0]['idempotencyKey']);
     }
 }
 
