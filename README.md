@@ -429,7 +429,7 @@ Active development.
 
 ### 0.5.0
 
-Public-client and account API hardening. Full details and usage examples live in the docs: [Release notes — v0.5.0](https://lonsdale201.github.io/better-route-docs/docs/better-route/release-notes/v0.5.0).
+Public-client and account API hardening. Full details and usage examples live in the docs: [Release notes — v0.5.0](https://lonsdale201.github.io/better-docs/docs/better-route/release-notes/v0.5.0).
 
 - Added `AtomicIdempotencyMiddleware` and atomic idempotency store contracts for side-effectful write routes.
 - Added `WpdbAtomicIdempotencyStore` with `INSERT IGNORE` reservation semantics and a dedicated installable table schema.
