@@ -202,7 +202,7 @@ final class SecurityPrimitivesTest extends TestCase
         self::assertSame('user-1', $result);
 
         $this->expectException(ConflictException::class);
-        $middleware->handle($context, static fn (): null => null);
+        $middleware->handle($context, static fn (): mixed => null);
     }
 
     public function testBearerTokenAuthMiddlewareSplitsScopeString(): void
