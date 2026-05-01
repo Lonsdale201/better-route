@@ -8,6 +8,8 @@ use BetterRoute\Http\ConflictException;
 use BetterRoute\Http\PreconditionFailedException;
 use BetterRoute\Http\RequestContext;
 use BetterRoute\Http\Response;
+use BetterRoute\Middleware\Write\ArrayAtomicIdempotencyStore;
+use BetterRoute\Middleware\Write\AtomicIdempotencyMiddleware;
 use BetterRoute\Middleware\Write\IdempotencyMiddleware;
 use BetterRoute\Middleware\Write\IdempotencyStoreInterface;
 use BetterRoute\Middleware\Write\OptimisticLockMiddleware;
@@ -136,6 +138,67 @@ final class WriteSafetyMiddlewareTest extends TestCase
         $middleware->handle($context, $next);
 
         self::assertSame(1, $calls);
+    }
+
+    public function testAtomicIdempotencyRejectsConcurrentDuplicateBeforeFirstCompletes(): void
+    {
+        $store = new ArrayAtomicIdempotencyStore();
+        $middleware = new AtomicIdempotencyMiddleware($store, ttlSeconds: 60);
+
+        $context = new RequestContext(
+            'req_atomic_1',
+            '/checkout',
+            new WriteSafetyRequest(
+                headers: ['idempotency-key' => 'payment-1'],
+                method: 'POST',
+                json: ['amount' => 1200]
+            )
+        );
+
+        $innerException = null;
+        $first = $middleware->handle($context, function () use ($middleware, $context, &$innerException): Response {
+            try {
+                $middleware->handle($context, static fn (): Response => new Response(['duplicate' => true], 201));
+            } catch (ConflictException $exception) {
+                $innerException = $exception;
+            }
+
+            return new Response(['created' => true], 201);
+        });
+
+        self::assertInstanceOf(Response::class, $first);
+        self::assertInstanceOf(ConflictException::class, $innerException);
+        self::assertSame('idempotency_in_progress', $innerException->errorCode());
+    }
+
+    public function testAtomicIdempotencyReplaysCompletedResponse(): void
+    {
+        $store = new ArrayAtomicIdempotencyStore();
+        $middleware = new AtomicIdempotencyMiddleware($store, ttlSeconds: 60);
+        $context = new RequestContext(
+            'req_atomic_2',
+            '/checkout',
+            new WriteSafetyRequest(
+                headers: ['idempotency-key' => 'payment-2'],
+                method: 'POST',
+                json: ['amount' => 1200]
+            )
+        );
+
+        $calls = 0;
+        $next = static function () use (&$calls): Response {
+            $calls++;
+            return new Response(['call' => $calls], 201);
+        };
+
+        $first = $middleware->handle($context, $next);
+        $second = $middleware->handle($context, $next);
+
+        self::assertSame(1, $calls);
+        self::assertInstanceOf(Response::class, $first);
+        self::assertInstanceOf(Response::class, $second);
+        self::assertSame(['call' => 1], $second->body);
+        self::assertSame('true', $second->headers['Idempotency-Replayed']);
     }
 
     public function testOptimisticLockMiddlewareAllowsMatchingVersion(): void

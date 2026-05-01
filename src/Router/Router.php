@@ -104,6 +104,11 @@ final class Router
         return $this->map('DELETE', $uri, $handler);
     }
 
+    public function options(string $uri, mixed $handler): RouteBuilder
+    {
+        return $this->map('OPTIONS', $uri, $handler);
+    }
+
     /**
      * @return list<RouteDefinition>
      */
@@ -168,7 +173,7 @@ final class Router
 
     private function defaultPermissionForRoute(RouteDefinition $route): callable
     {
-        return $route->method === 'GET'
+        return in_array($route->method, ['GET', 'OPTIONS'], true)
             ? static fn (): bool => true
             : static fn (): bool => false;
     }

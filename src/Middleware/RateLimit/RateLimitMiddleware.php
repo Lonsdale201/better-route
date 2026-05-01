@@ -48,17 +48,25 @@ final class RateLimitMiddleware implements MiddlewareInterface
 
         $response = $next($context->withAttribute('rateLimit', $result));
 
-        if ($response instanceof Response) {
-            $headers = array_merge($response->headers, [
-                'X-RateLimit-Limit' => (string) $this->limit,
-                'X-RateLimit-Remaining' => (string) $result->remaining,
-                'X-RateLimit-Reset' => (string) $result->resetAt,
-            ]);
+        $headers = [
+            'X-RateLimit-Limit' => (string) $this->limit,
+            'X-RateLimit-Remaining' => (string) $result->remaining,
+            'X-RateLimit-Reset' => (string) $result->resetAt,
+        ];
 
-            return new Response($response->body, $response->status, $headers);
+        if ($response instanceof Response) {
+            return new Response($response->body, $response->status, array_merge($response->headers, $headers));
         }
 
-        return $response;
+        if (is_object($response) && method_exists($response, 'header')) {
+            foreach ($headers as $name => $value) {
+                $response->header($name, $value);
+            }
+
+            return $response;
+        }
+
+        return new Response($response, 200, $headers);
     }
 
     private function identityKey(RequestContext $context): string

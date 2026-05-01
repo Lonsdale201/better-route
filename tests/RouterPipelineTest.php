@@ -170,6 +170,19 @@ final class RouterPipelineTest extends TestCase
         self::assertSame([], $registration['route']->meta['security']);
     }
 
+    public function testOptionsRoutesArePublicByDefault(): void
+    {
+        $router = Router::make('better-route', 'v1');
+        $router->options('/items', static fn (): Response => new Response(null, 204));
+
+        $dispatcher = new InMemoryDispatcher();
+        $router->register($dispatcher);
+        $registration = $dispatcher->registrations[0];
+
+        self::assertSame('OPTIONS', $registration['route']->method);
+        self::assertTrue(($registration['permissionCallback'])());
+    }
+
     public function testMiddlewareFactoryResolvesConstructorDependencies(): void
     {
         $trace = [];

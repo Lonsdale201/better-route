@@ -12,6 +12,7 @@ Supports PHP 8.1+ and is tested against WordPress 6.9 stubs. WooCommerce support
 
 - Fluent REST router on top of `register_rest_route()`
 - Middleware pipeline (`global -> group -> route`)
+- Explicit `OPTIONS` route support for preflight endpoints
 - Resource DSL for:
   - CPT-backed endpoints
   - custom table-backed endpoints
@@ -40,7 +41,7 @@ From public GitHub via Composer (`type: vcs`):
 ```json
 {
   "require": {
-    "better-route/better-route": "^0.4.0"
+    "better-route/better-route": "^0.5.0"
   },
   "repositories": [
     {
@@ -199,14 +200,23 @@ add_action('rest_api_init', function () {
 - `BetterRoute\Middleware\Auth\CookieNonceAuthMiddleware`
 - `BetterRoute\Middleware\Auth\ApplicationPasswordAuthMiddleware`
 - `BetterRoute\Middleware\Auth\WpClaimsUserMapper`
+- `BetterRoute\Middleware\Auth\OwnershipGuardMiddleware`
 
 ### Write safety
 
 - `BetterRoute\Middleware\Write\IdempotencyMiddleware`
 - `BetterRoute\Middleware\Write\WpdbIdempotencyStore`
+- `BetterRoute\Middleware\Write\AtomicIdempotencyMiddleware`
+- `BetterRoute\Middleware\Write\ArrayAtomicIdempotencyStore`
+- `BetterRoute\Middleware\Write\WpdbAtomicIdempotencyStore`
 - `BetterRoute\Middleware\Write\OptimisticLockMiddleware`
 - `BetterRoute\Http\ConflictException` (`409`)
 - `BetterRoute\Http\PreconditionFailedException` (`412`)
+
+### Public-client API hardening
+
+- `BetterRoute\Middleware\Cors\CorsMiddleware`
+- `BetterRoute\Middleware\Cors\CorsPolicy`
 
 ### Cache / conditional reads
 
@@ -223,6 +233,7 @@ add_action('rest_api_init', function () {
 ### Observability
 
 - `BetterRoute\Middleware\Audit\AuditMiddleware`
+- `BetterRoute\Middleware\Audit\AuditEnricherMiddleware`
 - `BetterRoute\Middleware\Observability\MetricsMiddleware`
 - `BetterRoute\Observability\AuditEventFactory`
 - `BetterRoute\Observability\PrometheusMetricSink`
@@ -245,7 +256,7 @@ $contracts = array_merge(
 
 $openApi = (new OpenApiExporter())->export($contracts, [
     'title' => 'better-route API',
-    'version' => 'v0.4.0',
+    'version' => 'v0.5.0',
     'serverUrl' => '/wp-json',
     'strictSchemas' => true,
     'components' => array_replace_recursive(
@@ -306,7 +317,7 @@ OpenApiRouteRegistrar::register(
     ]),
     options: [
         'title' => 'better-route API',
-        'version' => 'v0.4.0',
+        'version' => 'v0.5.0',
         'serverUrl' => '/wp-json',
         // Defaults to manage_options when omitted.
         'permissionCallback' => static fn (): bool => current_user_can('manage_options'),
@@ -415,6 +426,21 @@ composer cs-check
 Active development.
 
 ## Changelog
+
+### 0.5.0
+
+Public-client and account API hardening. Full details and usage examples live in the docs: [Release notes — v0.5.0](https://lonsdale201.github.io/better-route-docs/docs/better-route/release-notes/v0.5.0).
+
+- Added `AtomicIdempotencyMiddleware` and atomic idempotency store contracts for side-effectful write routes.
+- Added `WpdbAtomicIdempotencyStore` with `INSERT IGNORE` reservation semantics and a dedicated installable table schema.
+- Added `ArrayAtomicIdempotencyStore` for tests and non-production local use.
+- Added `CorsMiddleware` and `CorsPolicy` for explicit origin allowlists, credential support, exposed headers, and preflight `OPTIONS` responses.
+- Added `Router::options()` and public-by-default `OPTIONS` route permissions for explicit preflight endpoints.
+- Added `OwnershipGuardMiddleware` for route-level owner checks based on the authenticated `auth` context or current WP user.
+- Added `OwnedResourcePolicy::currentUserOwns()` for Resource DSL ownership policies.
+- Added `AuditEnricherMiddleware` and taught `AuditMiddleware` to merge safe `audit` context attributes into emitted events.
+- Updated `RateLimitMiddleware` so array handler responses are wrapped into `Response` and still receive rate-limit headers.
+- Updated `Support\Version::VERSION` to `0.5.0-dev`.
 
 ### 0.4.0
 
