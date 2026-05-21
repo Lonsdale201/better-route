@@ -295,8 +295,8 @@ final class SecurityPrimitivesTest extends TestCase
                 'alg' => 'ES256',
                 'use' => 'sig',
                 'crv' => 'P-256',
-                'x' => Crypto::base64UrlEncode($details['ec']['x']),
-                'y' => Crypto::base64UrlEncode($details['ec']['y']),
+                'x' => Crypto::base64UrlEncode(str_pad($details['ec']['x'], 32, "\x00", STR_PAD_LEFT)),
+                'y' => Crypto::base64UrlEncode(str_pad($details['ec']['y'], 32, "\x00", STR_PAD_LEFT)),
             ],
         ];
     }
