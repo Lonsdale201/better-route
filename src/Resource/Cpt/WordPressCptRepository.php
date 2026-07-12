@@ -127,10 +127,11 @@ final class WordPressCptRepository implements CptDeleteModeRepositoryInterface
                 throw new RuntimeException('wp_trash_post is unavailable.');
             }
 
-            return wp_trash_post($id) !== false;
+            // Returns WP_Post|false|null — treat null (nothing deleted) as failure.
+            return (bool) wp_trash_post($id);
         }
 
-        return wp_delete_post($id, true) !== false;
+        return (bool) wp_delete_post($id, true);
     }
 
     /**

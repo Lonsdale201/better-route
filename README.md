@@ -6,7 +6,7 @@ A thin PHP 8.1+ REST routing and resource library for WordPress.
 
 Built for headless and integration-heavy projects where you want a stable, versioned API contract on top of WP.
 
-Supports PHP 8.1+ and is tested against WordPress 6.9 stubs. WooCommerce support is optional and tested against WooCommerce 10.6 stubs.
+Supports PHP 8.1+ and is tested against WordPress 6.9 stubs. WooCommerce support is optional and tested against WooCommerce 10.9 stubs. (The WordPress stub package is currently capped at 6.9 by the WooCommerce stubs' dependency constraint; the library targets current WordPress 7.0 / WooCommerce 10.9 and is verified against a live WP 7.0 / WC 10.9 HPOS install.)
 
 ## What It Gives You
 
@@ -47,7 +47,7 @@ From public GitHub via Composer (`type: vcs`):
 ```json
 {
   "require": {
-    "better-route/better-route": "^0.6.0"
+    "better-route/better-route": "^1.0"
   },
   "repositories": [
     {
@@ -446,9 +446,47 @@ composer cs-check
 
 ## Current Status
 
-Active development.
+Stable — 1.0.0. Distributed via Composer from GitHub (not yet on Packagist).
 
 ## Changelog
+
+### 1.0.0 — 2026-07-12
+
+First stable release. Consolidates the 0.3–0.6 development line and adds a full pre-1.0 hardening pass across security, correctness, and the WooCommerce integration layer. All items below are verified by the test suite (135 tests), PHPStan, and a live WordPress 7.0 / WooCommerce 10.9 HPOS install.
+
+Hardening pass (security, correctness, WooCommerce).
+
+Security:
+- `TrustedProxyClientIpResolver` now resolves the client IP by walking `X-Forwarded-For` right-to-left and skipping trusted-proxy hops, instead of trusting the (spoofable) leftmost entry. Prevents client-IP spoofing that could bypass `IpAllowlistMiddleware`, forge rate-limit buckets, and falsify audit IPs.
+- `WpClaimsUserMapper` no longer maps `email`/`login` claims to WordPress users by default (email/login claim lists are now empty). When enabled, email mapping requires a truthy `email_verified` claim (`$requireEmailVerified`, default true). Prevents account takeover from unverified third-party-issuer email claims. Prefer a `user_id` claim or an issuer-scoped custom resolver.
+- `CorsPolicy` now throws if constructed with a wildcard origin (`*`) together with `allowCredentials: true`.
+- `HmacSignatureMiddleware` can optionally sign the canonicalized query string (`$signQueryString`); query params remain unauthenticated by default (documented on the constructor).
+- `WpCacheSingleUseTokenStore` now requires a persistent object cache (throws otherwise) so single-use consumption is actually atomic; use `WpdbSingleUseTokenStore` on installs without one.
+- `WpdbIdempotencyStore` / `WpdbAtomicIdempotencyStore` restrict `unserialize()` to the library's own `Response` class (no arbitrary object injection).
+- `JwtAuthMiddleware` / `BearerTokenAuthMiddleware` treat token-supplied (granted) scopes as literals; a trailing-`*` wildcard on a granted scope is honored only via the new `allowGrantedScopeWildcards` opt-in. Server-defined required-scope wildcards are unchanged.
+- `HttpJwksProvider` uses `wp_safe_remote_get()` with bounded redirects and response size.
+- The error envelope no longer leaks internal exception class names or raw messages for uncaught throwables (400/500 are generic; intentional `ApiException` detail is preserved).
+
+Correctness:
+- `WpdbAdapter` list no longer calls `$wpdb->prepare()` on the binding-less COUNT query (avoided a `_doing_it_wrong` notice on every unfiltered list).
+- Optimistic-lock "precondition required" now returns `428` via `PreconditionRequiredException` (was `412`).
+- `CachingMiddleware` no longer caches non-2xx responses; documented the auth-before-cache ordering requirement.
+- CPT delete treats a `null` return from `wp_delete_post()`/`wp_trash_post()` as failure.
+- Single-use token salt derives from the documented `wp_salt('auth')` scheme.
+
+WooCommerce:
+- Variation line items are now priced from the actual variation product, not the parent.
+- Order and product `search` use the supported `s` query var (previously a silently-ignored `search` var).
+- Customer delete loads `wp-admin/includes/user.php` so `wp_delete_user()` works in REST context.
+- Order line-item replacement is rejected on stock-reduced orders (prevents silent stock corruption).
+- Monetary fields (order/line-item/coupon/customer) are serialized as decimal strings; OpenAPI money types aligned to `string`.
+- HPOS-unavailable now returns `503` (was `409`); product routes no longer require HPOS.
+- Product `price` is read-only (derived field); set `regular_price`/`sale_price`.
+- WooCommerce `WC_Data_Exception` from CRUD setters maps to `400` instead of `500`.
+- Product `price` sort removed (unsupported/unsorted in WC); order `total` sort retained (verified on HPOS).
+- Coupon code filter/create resolve through `wc_get_coupon_id_by_code()` with a duplicate-code `409` guard.
+- Customer list no longer computes `orders_count`/`total_spent` by default (avoids an N+1; request them explicitly).
+- Added `HposGuard::declareCompatibility(__FILE__)` helper for host plugins to declare HPOS compatibility.
 
 ### 0.6.0
 

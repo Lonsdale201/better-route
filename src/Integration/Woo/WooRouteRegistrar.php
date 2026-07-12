@@ -263,8 +263,10 @@ final class WooRouteRegistrar
         }
 
         if (in_array('list', $productActions, true)) {
-            $router->get($basePath . '/products', function (mixed $request) use ($productListParser, $requireHpos): array {
-                $this->guard->assertReady($requireHpos);
+            $router->get($basePath . '/products', function (mixed $request) use ($productListParser): array {
+                // Products are not moved by HPOS — gate only on WooCommerce
+                // availability, never on order-table storage.
+                $this->guard->assertWooAvailable();
                 $query = $productListParser->parse($request);
                 $result = $this->productService->list($query);
 
@@ -286,8 +288,8 @@ final class WooRouteRegistrar
         }
 
         if (in_array('get', $productActions, true)) {
-            $router->get($basePath . '/products/(?P<id>\d+)', function (mixed $request) use ($requireHpos): array {
-                $this->guard->assertReady($requireHpos);
+            $router->get($basePath . '/products/(?P<id>\d+)', function (mixed $request): array {
+                $this->guard->assertWooAvailable();
                 $this->assertAllowedParams($request, ['id', 'fields']);
                 $id = $this->readId($request);
                 $fields = $this->parseFieldsParameter($request, $this->productService->allowedFields(), $this->productService->getDefaultFields());
@@ -324,8 +326,8 @@ final class WooRouteRegistrar
                 (bool) $idempotency['requireKey']
             );
 
-            $builder = $router->post($basePath . '/products', function (mixed $request) use ($requireHpos): Response {
-                $this->guard->assertReady($requireHpos);
+            $builder = $router->post($basePath . '/products', function (mixed $request): Response {
+                $this->guard->assertWooAvailable();
                 $payload = $this->readPayload($request);
                 $item = $this->productService->create($payload, $this->productService->getDefaultFields());
                 return new Response(['data' => $item], 201);
@@ -339,8 +341,8 @@ final class WooRouteRegistrar
         }
 
         if (in_array('update', $productActions, true)) {
-            $updateProduct = function (mixed $request) use ($requireHpos): array {
-                $this->guard->assertReady($requireHpos);
+            $updateProduct = function (mixed $request): array {
+                $this->guard->assertWooAvailable();
                 $id = $this->readId($request);
                 $payload = $this->readPayload($request);
                 $item = $this->productService->update($id, $payload, $this->productService->getDefaultFields());
@@ -381,8 +383,8 @@ final class WooRouteRegistrar
         }
 
         if (in_array('delete', $productActions, true)) {
-            $router->delete($basePath . '/products/(?P<id>\d+)', function (mixed $request) use ($requireHpos, $deleteMode): array {
-                $this->guard->assertReady($requireHpos);
+            $router->delete($basePath . '/products/(?P<id>\d+)', function (mixed $request) use ($deleteMode): array {
+                $this->guard->assertWooAvailable();
                 $id = $this->readId($request);
                 $deleted = $this->productService->delete($id, $deleteMode === 'force');
                 if (!$deleted) {

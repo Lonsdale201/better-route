@@ -28,7 +28,13 @@ final class WooCustomerService
         'meta_data',
     ];
 
-    /** @var list<string> */
+    /**
+     * orders_count / total_spent are intentionally excluded from the list
+     * defaults: each is a per-customer order query, so including them by default
+     * makes list an N+1. Request them explicitly (?fields=...) when needed.
+     *
+     * @var list<string>
+     */
     private const LIST_DEFAULT_FIELDS = [
         'id',
         'email',
@@ -37,8 +43,6 @@ final class WooCustomerService
         'display_name',
         'role',
         'date_created',
-        'orders_count',
-        'total_spent',
     ];
 
     /** @var list<string> */
@@ -188,8 +192,7 @@ final class WooCustomerService
         }
 
         $customer = new \WC_Customer();
-        $this->applyPayload($customer, $payload, true);
-        $customer->save();
+        $this->persistCustomer($customer, $payload, true);
 
         $id = $customer->get_id();
         if ($id < 1) {
@@ -216,15 +219,41 @@ final class WooCustomerService
         $this->assertCurrentUserCan('edit_user', $id);
 
         $this->assertPayloadKeys($payload);
-        $this->applyPayload($customer, $payload, false);
-        $customer->save();
+        $this->persistCustomer($customer, $payload, false);
 
         return $this->mapCustomer($customer, $fields);
+    }
+
+    /**
+     * @param array<string, mixed> $payload
+     */
+    private function persistCustomer(object $customer, array $payload, bool $isCreate): void
+    {
+        try {
+            $this->applyPayload($customer, $payload, $isCreate);
+            if (method_exists($customer, 'save')) {
+                $customer->save();
+            }
+        } catch (\WC_Data_Exception $exception) {
+            $code = $exception->getErrorCode();
+            throw new ApiException(
+                $exception->getMessage() !== '' ? $exception->getMessage() : 'Invalid request.',
+                400,
+                $code !== '' ? $code : 'validation_failed'
+            );
+        }
     }
 
     public function delete(int $id): bool
     {
         $this->assertWooFunctions();
+
+        // wp_delete_user() lives in wp-admin/includes/user.php, which is not
+        // loaded during REST/front-end requests — load it or the delete would
+        // silently no-op. (Mirrors WooCommerce's own customers controller.)
+        if (!function_exists('wp_delete_user') && defined('ABSPATH')) {
+            require_once ABSPATH . 'wp-admin/includes/user.php';
+        }
 
         if (!function_exists('get_userdata') || !function_exists('wp_delete_user')) {
             return false;
@@ -264,7 +293,7 @@ final class WooCustomerService
                 'is_paying_customer' => method_exists($customer, 'get_is_paying_customer') ? (bool) $customer->get_is_paying_customer() : false,
                 'avatar_url' => $this->getAvatarUrl($customer),
                 'orders_count' => method_exists($customer, 'get_order_count') ? (int) $customer->get_order_count() : 0,
-                'total_spent' => method_exists($customer, 'get_total_spent') ? (float) $customer->get_total_spent() : 0.0,
+                'total_spent' => method_exists($customer, 'get_total_spent') ? (string) $customer->get_total_spent() : '0',
                 'meta_data' => method_exists($customer, 'get_meta_data') ? MetaDataHelper::serialize($customer->get_meta_data()) : [],
                 default => null,
             };

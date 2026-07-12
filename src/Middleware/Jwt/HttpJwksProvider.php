@@ -116,15 +116,29 @@ final class HttpJwksProvider implements JwksProviderInterface
     private function defaultHttpGet(): callable
     {
         return static function (string $uri): string {
-            if (!function_exists('wp_remote_get') || !function_exists('wp_remote_retrieve_response_code') || !function_exists('wp_remote_retrieve_body')) {
+            if (!function_exists('wp_remote_retrieve_response_code') || !function_exists('wp_remote_retrieve_body')) {
                 throw new RuntimeException('WordPress HTTP API is unavailable.');
             }
 
-            $response = wp_remote_get($uri, [
+            // Prefer wp_safe_remote_get(): it applies WordPress's SSRF guard
+            // (blocks internal/loopback hosts). Bound redirects and response
+            // size so a hostile or misbehaving issuer cannot pivot internally
+            // or exhaust memory. JWKS documents are small and public.
+            $args = [
                 'headers' => ['Accept' => 'application/json'],
                 'sslverify' => true,
                 'timeout' => 10,
-            ]);
+                'redirection' => 1,
+                'limit_response_size' => 256 * 1024,
+            ];
+
+            if (function_exists('wp_safe_remote_get')) {
+                $response = wp_safe_remote_get($uri, $args);
+            } elseif (function_exists('wp_remote_get')) {
+                $response = wp_remote_get($uri, $args);
+            } else {
+                throw new RuntimeException('WordPress HTTP API is unavailable.');
+            }
 
             if (function_exists('is_wp_error') && is_wp_error($response)) {
                 throw new RuntimeException('Unable to fetch JWKS.');

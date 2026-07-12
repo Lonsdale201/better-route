@@ -146,7 +146,9 @@ final class WpdbAtomicIdempotencyStore implements AtomicIdempotencyStoreInterfac
             return null;
         }
 
-        return unserialize($serialized);
+        // Restrict object deserialization to the library's own response DTO so a
+        // tampered row cannot trigger PHP object injection via __wakeup/__destruct.
+        return unserialize($serialized, ['allowed_classes' => [\BetterRoute\Http\Response::class]]);
     }
 
     private function storageKey(string $key): string

@@ -17,6 +17,18 @@ final class WpCacheSingleUseTokenStore implements SingleUseTokenStoreInterface
                 throw new RuntimeException(sprintf('%s is unavailable.', $function));
             }
         }
+
+        // The wp_cache_add() lock only provides cross-request mutual exclusion
+        // when a persistent object cache is installed. On the default in-process
+        // cache two concurrent requests could each acquire the lock and consume
+        // the same token twice, so refuse to run without persistence — use
+        // WpdbSingleUseTokenStore (atomic UPDATE) on stores without Redis/Memcached.
+        if (function_exists('wp_using_ext_object_cache') && !wp_using_ext_object_cache()) {
+            throw new RuntimeException(
+                'WpCacheSingleUseTokenStore requires a persistent object cache. '
+                . 'Use WpdbSingleUseTokenStore when no persistent object cache is available.'
+            );
+        }
     }
 
     public function consume(string $tokenHash): ?array

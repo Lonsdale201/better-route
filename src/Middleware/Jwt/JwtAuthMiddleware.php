@@ -25,7 +25,8 @@ final class JwtAuthMiddleware implements MiddlewareInterface
         private readonly JwtVerifierInterface $verifier,
         private readonly array $requiredScopes = [],
         private readonly ?ClaimsUserMapperInterface $userMapper = null,
-        ?callable $setCurrentUser = null
+        ?callable $setCurrentUser = null,
+        private readonly bool $allowGrantedScopeWildcards = false
     ) {
         $this->setCurrentUser = $setCurrentUser ?? static function (int $userId): void {
             if (function_exists('wp_set_current_user')) {
@@ -150,12 +151,16 @@ final class JwtAuthMiddleware implements MiddlewareInterface
             return true;
         }
 
+        // Wildcards on the server-defined REQUIRED scope are always honored.
         if (str_ends_with($required, '*')) {
             $prefix = rtrim($required, '*');
             return str_starts_with($granted, $prefix);
         }
 
-        if (str_ends_with($granted, '*')) {
+        // A trailing "*" on a GRANTED (token-supplied) scope is treated as a
+        // prefix grant only when explicitly opted in — otherwise token data
+        // must not be able to widen its own authority.
+        if ($this->allowGrantedScopeWildcards && str_ends_with($granted, '*')) {
             $prefix = rtrim($granted, '*');
             return str_starts_with($required, $prefix);
         }

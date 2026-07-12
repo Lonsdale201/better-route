@@ -70,14 +70,20 @@ final class WooProductService
         'meta_data',
     ];
 
-    /** @var list<string> */
+    /**
+     * `price` is intentionally excluded: it is a DERIVED field in WooCommerce
+     * (computed from regular_price/sale_price and the scheduled-sale sync), so
+     * writing it directly drifts and is silently overwritten on the next save.
+     * Set regular_price / sale_price instead. (`price` stays readable.)
+     *
+     * @var list<string>
+     */
     private const WRITABLE_FIELDS = [
         'name',
         'slug',
         'status',
         'type',
         'sku',
-        'price',
         'regular_price',
         'sale_price',
         'catalog_visibility',
@@ -149,7 +155,8 @@ final class WooProductService
         }
 
         if ($query->search !== null && $query->search !== '') {
-            $args['search'] = $query->search;
+            // WC_Product_Query has no "search" var; "s" passes through to WP_Query.
+            $args['s'] = $query->search;
         }
 
         if ($query->stockStatus !== null && $query->stockStatus !== '') {
@@ -364,10 +371,6 @@ final class WooProductService
             $product->set_sku((string) $payload['sku']);
         }
 
-        if (array_key_exists('price', $payload) && method_exists($product, 'set_price')) {
-            $product->set_price((string) $payload['price']);
-        }
-
         if (array_key_exists('regular_price', $payload) && method_exists($product, 'set_regular_price')) {
             $product->set_regular_price((string) $payload['regular_price']);
         }
@@ -441,12 +444,14 @@ final class WooProductService
 
     private function mapSortField(string $field): string
     {
+        // Note: WooCommerce's product query does not reliably order by 'price'
+        // (verified against WC 10.9 — it returns unsorted results), so price is
+        // not an advertised sort field; unknown values fall back to date.
         return match ($field) {
             'date_created' => 'date',
             'date_modified' => 'modified',
             'id' => 'ID',
             'title' => 'title',
-            'price' => 'price',
             default => 'date',
         };
     }

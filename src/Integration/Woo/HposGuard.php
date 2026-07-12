@@ -33,10 +33,39 @@ final class HposGuard
         if (!$this->isHposEnabled()) {
             throw new ApiException(
                 message: 'HPOS is required for this endpoint.',
-                status: 409,
+                status: 503,
                 errorCode: 'hpos_required'
             );
         }
+    }
+
+    /**
+     * Declare HPOS (custom order tables) compatibility for the HOST plugin.
+     *
+     * A library cannot declare on behalf of the plugin that embeds it, so call
+     * this from the host plugin's main file with its __FILE__:
+     *
+     *   \BetterRoute\Integration\Woo\HposGuard::declareCompatibility(__FILE__);
+     *
+     * Any plugin exposing these order routes touches orders and must declare on
+     * `before_woocommerce_init`, or WooCommerce flags it incompatible and blocks
+     * HPOS enablement. The runtime HposGuard check does not remove this obligation.
+     */
+    public static function declareCompatibility(string $pluginFile): void
+    {
+        if (!function_exists('add_action')) {
+            return;
+        }
+
+        add_action('before_woocommerce_init', static function () use ($pluginFile): void {
+            if (class_exists('Automattic\\WooCommerce\\Utilities\\FeaturesUtil')) {
+                \Automattic\WooCommerce\Utilities\FeaturesUtil::declare_compatibility(
+                    'custom_order_tables',
+                    $pluginFile,
+                    true
+                );
+            }
+        });
     }
 
     public function isHposEnabled(): bool

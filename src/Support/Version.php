@@ -6,5 +6,5 @@ namespace BetterRoute\Support;
 
 final class Version
 {
-    public const VERSION = '0.6.0-dev';
+    public const VERSION = '1.0.0';
 }

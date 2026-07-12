@@ -10,18 +10,20 @@ final class ErrorNormalizer
 {
     public function fromThrowable(Throwable $throwable, string $requestId): Response
     {
-        $status = $throwable instanceof ApiException
-            ? $throwable->status()
-            : ($throwable instanceof \InvalidArgumentException ? 400 : 500);
-        $code = $throwable instanceof ApiException
-            ? $throwable->errorCode()
-            : ($status === 400 ? 'invalid_request' : 'internal_error');
-        $details = $throwable instanceof ApiException
-            ? $throwable->details()
-            : ($status === 400 ? ['exception' => $throwable::class] : []);
-        $message = $throwable instanceof ApiException || $status === 400
-            ? ($throwable->getMessage() !== '' ? $throwable->getMessage() : 'Invalid request.')
-            : 'Unexpected error.';
+        if ($throwable instanceof ApiException) {
+            $status = $throwable->status();
+            $code = $throwable->errorCode();
+            $details = $throwable->details();
+            $message = $throwable->getMessage() !== '' ? $throwable->getMessage() : 'Invalid request.';
+        } else {
+            // Never leak internal exception class names or raw messages to the
+            // client for uncaught throwables — only intentional ApiExceptions
+            // carry client-facing detail.
+            $status = $throwable instanceof \InvalidArgumentException ? 400 : 500;
+            $code = $status === 400 ? 'invalid_request' : 'internal_error';
+            $details = [];
+            $message = $status === 400 ? 'Invalid request.' : 'Unexpected error.';
+        }
 
         return new Response(
             body: [

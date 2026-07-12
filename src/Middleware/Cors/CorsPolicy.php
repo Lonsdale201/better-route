@@ -4,6 +4,8 @@ declare(strict_types=1);
 
 namespace BetterRoute\Middleware\Cors;
 
+use InvalidArgumentException;
+
 final class CorsPolicy
 {
     /**
@@ -35,6 +37,15 @@ final class CorsPolicy
         private readonly bool $allowCredentials = false,
         private readonly int $maxAgeSeconds = 600
     ) {
+        // A wildcard origin with credentials would reflect ANY origin back with
+        // Access-Control-Allow-Credentials: true, defeating the same-origin
+        // policy for authenticated endpoints. Refuse the combination outright.
+        if ($allowCredentials && in_array('*', $allowedOrigins, true)) {
+            throw new InvalidArgumentException(
+                'CORS wildcard origin ("*") cannot be combined with credentials. '
+                . 'List explicit allowed origins when allowCredentials is enabled.'
+            );
+        }
     }
 
     /**
