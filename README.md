@@ -42,23 +42,13 @@ Supports PHP 8.1+ and is tested against WordPress 6.9 stubs. WooCommerce support
 
 ## Install
 
-From public GitHub via Composer (`type: vcs`):
+Published on [Packagist](https://packagist.org/packages/better-route/better-route) — install with Composer:
 
-```json
-{
-  "require": {
-    "better-route/better-route": "^1.0"
-  },
-  "repositories": [
-    {
-      "type": "vcs",
-      "url": "https://github.com/Lonsdale201/better-route"
-    }
-  ]
-}
+```bash
+composer require better-route/better-route:^1.0
 ```
 
-For local development only, you can still use path repository + symlink.
+Only add a VCS repository (pointing at this GitHub repo) if you need to track an unreleased branch or a fork. For local development you can still use a path repository + symlink.
 
 ## Quick Start
 
@@ -446,7 +436,7 @@ composer cs-check
 
 ## Current Status
 
-Stable — 1.0.0. Distributed via Composer from GitHub (not yet on Packagist).
+Stable — 1.0.0. Available on Packagist: `composer require better-route/better-route:^1.0`.
 
 ## Changelog
 
