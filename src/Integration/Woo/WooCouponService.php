@@ -137,7 +137,13 @@ final class WooCouponService
         ];
 
         if ($query->code !== null && $query->code !== '') {
-            $args['title'] = $query->code;
+            // Resolve through the coupon lookup so code normalization
+            // (wc_format_coupon_code) and the coupon cache apply, instead of a
+            // collation-dependent post-title match.
+            $couponId = function_exists('wc_get_coupon_id_by_code')
+                ? (int) wc_get_coupon_id_by_code($query->code)
+                : 0;
+            $args['post__in'] = [$couponId > 0 ? $couponId : 0];
         }
 
         if ($query->search !== null && $query->search !== '') {
@@ -202,9 +208,14 @@ final class WooCouponService
             throw $this->validationError(['code' => ['coupon code is required']]);
         }
 
+        // Reject duplicate codes up front — two published coupons sharing a code
+        // make WC_Coupon( code ) resolution ambiguous at apply time.
+        if (function_exists('wc_get_coupon_id_by_code') && (int) wc_get_coupon_id_by_code($code) > 0) {
+            throw new ApiException('A coupon with this code already exists.', 409, 'coupon_exists');
+        }
+
         $coupon = new \WC_Coupon();
-        $this->applyPayload($coupon, $payload);
-        $coupon->save();
+        $this->persistCoupon($coupon, $payload);
 
         $id = $coupon->get_id();
         if ($id < 1) {
@@ -229,10 +240,29 @@ final class WooCouponService
         }
 
         $this->assertPayloadKeys($payload);
-        $this->applyPayload($coupon, $payload);
-        $coupon->save();
+        $this->persistCoupon($coupon, $payload);
 
         return $this->mapCoupon($coupon, $fields);
+    }
+
+    /**
+     * @param array<string, mixed> $payload
+     */
+    private function persistCoupon(object $coupon, array $payload): void
+    {
+        try {
+            $this->applyPayload($coupon, $payload);
+            if (method_exists($coupon, 'save')) {
+                $coupon->save();
+            }
+        } catch (\WC_Data_Exception $exception) {
+            $code = $exception->getErrorCode();
+            throw new ApiException(
+                $exception->getMessage() !== '' ? $exception->getMessage() : 'Invalid request.',
+                400,
+                $code !== '' ? $code : 'validation_failed'
+            );
+        }
     }
 
     public function delete(int $id, bool $force = true): bool
@@ -260,7 +290,7 @@ final class WooCouponService
             $row[$field] = match ($field) {
                 'id' => method_exists($coupon, 'get_id') ? (int) $coupon->get_id() : 0,
                 'code' => method_exists($coupon, 'get_code') ? (string) $coupon->get_code() : '',
-                'amount' => method_exists($coupon, 'get_amount') ? (float) $coupon->get_amount() : 0.0,
+                'amount' => method_exists($coupon, 'get_amount') ? (string) $coupon->get_amount() : '0',
                 'discount_type' => method_exists($coupon, 'get_discount_type') ? (string) $coupon->get_discount_type() : '',
                 'description' => method_exists($coupon, 'get_description') ? (string) $coupon->get_description() : '',
                 'date_created' => method_exists($coupon, 'get_date_created') ? $this->dateToAtom($coupon->get_date_created()) : null,
@@ -274,8 +304,8 @@ final class WooCouponService
                 'product_ids' => method_exists($coupon, 'get_product_ids') ? $this->intList($coupon->get_product_ids()) : [],
                 'excluded_product_ids' => method_exists($coupon, 'get_excluded_product_ids') ? $this->intList($coupon->get_excluded_product_ids()) : [],
                 'free_shipping' => method_exists($coupon, 'get_free_shipping') ? (bool) $coupon->get_free_shipping() : false,
-                'minimum_amount' => method_exists($coupon, 'get_minimum_amount') ? (float) $coupon->get_minimum_amount() : 0.0,
-                'maximum_amount' => method_exists($coupon, 'get_maximum_amount') ? (float) $coupon->get_maximum_amount() : 0.0,
+                'minimum_amount' => method_exists($coupon, 'get_minimum_amount') ? (string) $coupon->get_minimum_amount() : '0',
+                'maximum_amount' => method_exists($coupon, 'get_maximum_amount') ? (string) $coupon->get_maximum_amount() : '0',
                 'email_restrictions' => method_exists($coupon, 'get_email_restrictions') ? $this->stringListFromMixed($coupon->get_email_restrictions()) : [],
                 'exclude_sale_items' => method_exists($coupon, 'get_exclude_sale_items') ? (bool) $coupon->get_exclude_sale_items() : false,
                 'meta_data' => method_exists($coupon, 'get_meta_data') ? MetaDataHelper::serialize($coupon->get_meta_data()) : [],

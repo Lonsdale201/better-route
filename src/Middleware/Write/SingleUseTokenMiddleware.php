@@ -93,9 +93,12 @@ final class SingleUseTokenMiddleware implements MiddlewareInterface
         }
 
         if (function_exists('wp_salt')) {
-            $salt = (string) wp_salt('better_route_single_use_token');
-            if ($salt !== '') {
-                return $salt;
+            // Derive from the documented 'auth' scheme and bind a library-specific
+            // context, rather than relying on wp_salt()'s undocumented custom-scheme
+            // fallback.
+            $base = (string) wp_salt('auth');
+            if ($base !== '') {
+                return hash_hmac('sha256', 'better_route_single_use_token', $base);
             }
         }
 

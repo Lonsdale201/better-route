@@ -131,7 +131,9 @@ final class WooOrderService
         }
 
         if ($query->search !== null && $query->search !== '') {
-            $args['search'] = '*' . $query->search . '*';
+            // WC_Order_Query / HPOS OrdersTableQuery has no "search" var; "s" is
+            // the supported search key (the "*term*" wildcard form is WP_User_Query-only).
+            $args['s'] = $query->search;
         }
 
         $result = wc_get_orders($args);
@@ -198,10 +200,7 @@ final class WooOrderService
             throw new ApiException('Order creation failed.', 500, 'woo_order_create_failed');
         }
 
-        $this->applyPayload($order, $payload, true);
-        if (method_exists($order, 'save')) {
-            $order->save();
-        }
+        $this->persistPayload($order, $payload, true);
 
         return $this->mapOrder($order, $fields);
     }
@@ -221,12 +220,31 @@ final class WooOrderService
         }
 
         $this->assertPayloadKeys($payload);
-        $this->applyPayload($order, $payload, false);
-        if (method_exists($order, 'save')) {
-            $order->save();
-        }
+        $this->persistPayload($order, $payload, false);
 
         return $this->mapOrder($order, $fields);
+    }
+
+    /**
+     * @param array<string, mixed> $payload
+     */
+    private function persistPayload(object $order, array $payload, bool $isCreate): void
+    {
+        try {
+            $this->applyPayload($order, $payload, $isCreate);
+            if (method_exists($order, 'save')) {
+                $order->save();
+            }
+        } catch (\WC_Data_Exception $exception) {
+            // WooCommerce CRUD setters signal invalid input via WC_Data_Exception;
+            // surface it as a 400 rather than letting it fall through to a 500.
+            $code = $exception->getErrorCode();
+            throw new ApiException(
+                $exception->getMessage() !== '' ? $exception->getMessage() : 'Invalid request.',
+                400,
+                $code !== '' ? $code : 'validation_failed'
+            );
+        }
     }
 
     public function delete(int $id, bool $force = true): bool
@@ -256,8 +274,8 @@ final class WooOrderService
                 'number' => method_exists($order, 'get_order_number') ? (string) $order->get_order_number() : '',
                 'status' => method_exists($order, 'get_status') ? (string) $order->get_status() : '',
                 'currency' => method_exists($order, 'get_currency') ? (string) $order->get_currency() : '',
-                'total' => method_exists($order, 'get_total') ? (float) $order->get_total() : 0.0,
-                'total_tax' => method_exists($order, 'get_total_tax') ? (float) $order->get_total_tax() : 0.0,
+                'total' => method_exists($order, 'get_total') ? (string) $order->get_total() : '0',
+                'total_tax' => method_exists($order, 'get_total_tax') ? (string) $order->get_total_tax() : '0',
                 'customer_id' => method_exists($order, 'get_customer_id') ? (int) $order->get_customer_id() : 0,
                 'billing_email' => method_exists($order, 'get_billing_email') ? (string) $order->get_billing_email() : '',
                 'payment_method' => method_exists($order, 'get_payment_method') ? (string) $order->get_payment_method() : '',
@@ -401,6 +419,19 @@ final class WooOrderService
             throw $this->validationError(['line_items' => ['must be an array']]);
         }
 
+        if ($replaceExisting && $this->orderStockWasReduced($order)) {
+            // Removing/re-adding line items on a stock-reduced order would drop
+            // the _reduced_stock markers without restoring inventory (and new
+            // items would never reduce), silently corrupting stock in both
+            // directions. Refuse — edit items only before stock reduction, or
+            // adjust the order through status transitions.
+            throw new ApiException(
+                'Line items cannot be modified on an order that has already reduced stock.',
+                409,
+                'woo_line_items_locked'
+            );
+        }
+
         if ($replaceExisting && method_exists($order, 'get_items') && method_exists($order, 'remove_item')) {
             $existing = $order->get_items('line_item');
             if (is_array($existing)) {
@@ -441,15 +472,29 @@ final class WooOrderService
                 throw $this->validationError(['line_items.' . $index . '.quantity' => ['must be greater than 0']]);
             }
 
-            $args = [];
+            // For a variation, add the actual variation product so add_product()
+            // derives price, name, tax class and attributes from the variation —
+            // not the parent (which would record the parent's price/name).
+            $productToAdd = $product;
             if (isset($itemData['variation_id']) && is_numeric($itemData['variation_id'])) {
                 $variationId = (int) $itemData['variation_id'];
                 if ($variationId > 0) {
-                    $args['variation_id'] = $variationId;
+                    $variation = wc_get_product($variationId);
+                    if (
+                        !is_object($variation)
+                        || !method_exists($variation, 'get_parent_id')
+                        || (int) $variation->get_parent_id() !== $productId
+                    ) {
+                        throw $this->validationError([
+                            'line_items.' . $index . '.variation_id' => ['must be a variation of the given product'],
+                        ]);
+                    }
+
+                    $productToAdd = $variation;
                 }
             }
 
-            $itemId = method_exists($order, 'add_product') ? $order->add_product($product, $quantity, $args) : false;
+            $itemId = method_exists($order, 'add_product') ? $order->add_product($productToAdd, $quantity) : false;
             if (!is_numeric($itemId) || (int) $itemId < 1) {
                 throw new ApiException('Unable to add line item.', 409, 'woo_line_item_add_failed');
             }
@@ -478,6 +523,19 @@ final class WooOrderService
         }
     }
 
+    private function orderStockWasReduced(object $order): bool
+    {
+        if (!method_exists($order, 'get_meta')) {
+            return false;
+        }
+
+        $reduced = $order->get_meta('_order_stock_reduced');
+
+        return $reduced === true
+            || $reduced === 1
+            || (is_string($reduced) && in_array(strtolower(trim($reduced)), ['1', 'yes', 'true'], true));
+    }
+
     /**
      * @return list<array<string, mixed>>
      */
@@ -504,8 +562,8 @@ final class WooOrderService
                 'variation_id' => method_exists($item, 'get_variation_id') ? (int) $item->get_variation_id() : 0,
                 'name' => method_exists($item, 'get_name') ? (string) $item->get_name() : '',
                 'quantity' => method_exists($item, 'get_quantity') ? (int) $item->get_quantity() : 0,
-                'subtotal' => method_exists($item, 'get_subtotal') ? (float) $item->get_subtotal() : 0.0,
-                'total' => method_exists($item, 'get_total') ? (float) $item->get_total() : 0.0,
+                'subtotal' => method_exists($item, 'get_subtotal') ? (string) $item->get_subtotal() : '0',
+                'total' => method_exists($item, 'get_total') ? (string) $item->get_total() : '0',
                 'meta_data' => method_exists($item, 'get_meta_data') ? MetaDataHelper::serialize($item->get_meta_data()) : [],
             ];
         }

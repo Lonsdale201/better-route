@@ -44,7 +44,7 @@ final class TrustedProxyClientIpResolver implements ClientIpResolverInterface
                 continue;
             }
 
-            $candidate = $this->firstIpFromHeader($value);
+            $candidate = $this->clientIpFromHeader($value);
             if ($candidate !== null) {
                 return $candidate;
             }
@@ -114,11 +114,25 @@ final class TrustedProxyClientIpResolver implements ClientIpResolverInterface
         return null;
     }
 
-    private function firstIpFromHeader(string $value): ?string
+    /**
+     * Resolve the client IP from a forwarded header by walking the hop list
+     * from right to left and returning the first address that is NOT one of
+     * our own trusted proxies. Appending proxies (e.g. nginx
+     * proxy_add_x_forwarded_for) place the real peer at the right, while any
+     * client-supplied, spoofable entries sit to the left — so the leftmost
+     * value must never be trusted. When every hop is a trusted proxy there is
+     * no untrusted client address to report, so we fall back to REMOTE_ADDR.
+     */
+    private function clientIpFromHeader(string $value): ?string
     {
-        foreach (explode(',', $value) as $part) {
+        $parts = array_reverse(explode(',', $value));
+        foreach ($parts as $part) {
             $candidate = trim($part);
-            if ($candidate !== '' && filter_var($candidate, FILTER_VALIDATE_IP) !== false) {
+            if ($candidate === '' || filter_var($candidate, FILTER_VALIDATE_IP) === false) {
+                continue;
+            }
+
+            if (!$this->isTrustedProxy($candidate)) {
                 return $candidate;
             }
         }

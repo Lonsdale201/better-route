@@ -24,7 +24,7 @@ final class ProductListQueryParser
      */
     public function __construct(
         array $allowedFields,
-        array $allowedSort = ['date_created', 'date_modified', 'id', 'title', 'price'],
+        array $allowedSort = ['date_created', 'date_modified', 'id', 'title'],
         ?array $defaultFields = null,
         private readonly int $defaultPerPage = 20,
         private readonly int $maxPerPage = 100

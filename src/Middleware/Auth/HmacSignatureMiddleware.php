@@ -16,6 +16,17 @@ final class HmacSignatureMiddleware implements MiddlewareInterface
     private $now;
 
     /**
+     * The canonical string signed by clients is:
+     *
+     *   timestamp "\n" METHOD "\n" path "\n" sha256(body)
+     *
+     * and, when $signQueryString is enabled, a fifth line with the
+     * canonicalized (key-sorted) query string. By default query-string
+     * parameters are NOT covered by the signature — send any security-relevant
+     * parameter in the request body, or enable $signQueryString (the client's
+     * signer must then append the same canonical query line: keys sorted with
+     * ksort, re-encoded with http_build_query).
+     *
      * @param null|callable(): int $now
      */
     public function __construct(
@@ -25,7 +36,8 @@ final class HmacSignatureMiddleware implements MiddlewareInterface
         private readonly string $keyIdHeader = 'X-Key-Id',
         private readonly int $replayWindowSeconds = 300,
         private readonly string $algorithm = 'sha256',
-        ?callable $now = null
+        ?callable $now = null,
+        private readonly bool $signQueryString = false
     ) {
         if ($replayWindowSeconds < 1) {
             throw new RuntimeException('HMAC replay window must be positive.');
@@ -52,12 +64,16 @@ final class HmacSignatureMiddleware implements MiddlewareInterface
             throw new ApiException('Signature timestamp is outside the replay window.', 401, 'stale_signature');
         }
 
-        $canonical = implode("\n", [
+        $canonicalParts = [
             (string) $timestamp,
             $this->requestMethod($context->request),
             $this->requestPath($context),
             hash('sha256', $this->requestBody($context->request)),
-        ]);
+        ];
+        if ($this->signQueryString) {
+            $canonicalParts[] = $this->canonicalQuery($context->request);
+        }
+        $canonical = implode("\n", $canonicalParts);
 
         if (!$this->matchesSignature($signature, $canonical, $secret)) {
             throw new ApiException('Invalid signature.', 401, 'invalid_signature');
@@ -146,6 +162,39 @@ final class HmacSignatureMiddleware implements MiddlewareInterface
         }
 
         return $context->routePath;
+    }
+
+    private function canonicalQuery(mixed $request): string
+    {
+        $params = [];
+        if (is_object($request) && method_exists($request, 'get_query_params')) {
+            $value = $request->get_query_params();
+            if (is_array($value)) {
+                $params = $value;
+            }
+        }
+
+        if ($params === []) {
+            return '';
+        }
+
+        $this->ksortRecursive($params);
+
+        return http_build_query($params);
+    }
+
+    /**
+     * @param array<array-key, mixed> $params
+     */
+    private function ksortRecursive(array &$params): void
+    {
+        ksort($params);
+        foreach ($params as &$value) {
+            if (is_array($value)) {
+                $this->ksortRecursive($value);
+            }
+        }
+        unset($value);
     }
 
     private function requestBody(mixed $request): string

@@ -86,9 +86,14 @@ final class WpdbAdapter
             $items = [];
         }
 
+        // Only run through prepare() when there are bindings — the identifiers
+        // are already validated + backtick-quoted, and calling prepare() on a
+        // placeholder-less query triggers a _doing_it_wrong notice (since 3.9).
         $countSql = sprintf('SELECT COUNT(*) FROM %s%s', $tableName, $whereSql);
-        $countPrepared = $wpdb->prepare($countSql, ...$whereBindings);
-        $total = (int) $wpdb->get_var($countPrepared);
+        $countQuery = $whereBindings !== []
+            ? $wpdb->prepare($countSql, ...$whereBindings)
+            : $countSql;
+        $total = (int) $wpdb->get_var($countQuery);
 
         return [
             'items' => $items,

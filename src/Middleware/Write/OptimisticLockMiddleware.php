@@ -6,6 +6,7 @@ namespace BetterRoute\Middleware\Write;
 
 use BetterRoute\Http\ConflictException;
 use BetterRoute\Http\PreconditionFailedException;
+use BetterRoute\Http\PreconditionRequiredException;
 use BetterRoute\Http\RequestContext;
 use BetterRoute\Middleware\MiddlewareInterface;
 
@@ -24,7 +25,9 @@ final class OptimisticLockMiddleware implements MiddlewareInterface
         $expected = $this->extractExpectedVersion($context->request);
         if ($expected === null) {
             if ($this->required) {
-                throw new PreconditionFailedException('Precondition required.', 'precondition_required');
+                // Missing precondition is 428 Precondition Required (RFC 6585);
+                // 412 is reserved for a precondition that was supplied but failed.
+                throw new PreconditionRequiredException();
             }
 
             return $next($context);
