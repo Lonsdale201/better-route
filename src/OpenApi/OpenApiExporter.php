@@ -149,7 +149,10 @@ final class OpenApiExporter
             $operation['security'] = $security;
         }
 
-        $parameters = $this->normalizeParameters(is_array($meta['parameters'] ?? null) ? $meta['parameters'] : []);
+        $parameters = $this->mergeParameters(
+            $this->parametersFromArgs($contract['args'], $openApiPath),
+            $this->normalizeParameters(is_array($meta['parameters'] ?? null) ? $meta['parameters'] : [])
+        );
         $parameters = $this->ensurePathParameters($parameters, $openApiPath);
         if ($parameters !== []) {
             $operation['parameters'] = $parameters;
@@ -183,13 +186,17 @@ final class OpenApiExporter
      */
     private function responses(string $method, array $meta): array
     {
-        $status = $method === 'post' ? 201 : 200;
+        $status = match ($method) {
+            'post' => 201,
+            'options' => 204,
+            default => 200,
+        };
         $response = [
             'description' => 'Successful response',
         ];
 
         $responseSchema = $this->stringOrNull($meta['responseSchema'] ?? null);
-        if ($responseSchema !== null && $responseSchema !== '') {
+        if ($status !== 204 && $method !== 'head' && $responseSchema !== null && $responseSchema !== '') {
             $response['content'] = [
                 'application/json' => [
                     'schema' => [
@@ -199,12 +206,93 @@ final class OpenApiExporter
             ];
         }
 
-        return [
+        $defaults = [
             (string) $status => $response,
             'default' => [
                 '$ref' => '#/components/responses/ErrorResponse',
             ],
-        ] + $this->normalizeResponses(is_array($meta['responses'] ?? null) ? $meta['responses'] : []);
+        ];
+
+        return array_replace(
+            $defaults,
+            $this->normalizeResponses(is_array($meta['responses'] ?? null) ? $meta['responses'] : [])
+        );
+    }
+
+    /**
+     * WordPress REST `args` are the executable validation contract. Exporting
+     * them prevents the generated document from silently omitting list filters
+     * and pagination parameters when no duplicate meta declaration was added.
+     *
+     * @param array<string, mixed> $args
+     * @return list<array<string, mixed>>
+     */
+    private function parametersFromArgs(array $args, string $openApiPath): array
+    {
+        $parameters = [];
+
+        foreach ($args as $name => $definition) {
+            if (!is_string($name) || $name === '' || !is_array($definition)) {
+                continue;
+            }
+
+            $isPath = str_contains($openApiPath, '{' . $name . '}');
+            $schema = [];
+
+            $type = $definition['type'] ?? null;
+            if (is_string($type) && in_array($type, ['array', 'boolean', 'integer', 'number', 'object', 'string'], true)) {
+                $schema['type'] = $type;
+            } else {
+                $schema['type'] = 'string';
+            }
+
+            foreach (['default', 'enum', 'format', 'items', 'minimum', 'maximum', 'minLength', 'maxLength', 'pattern'] as $key) {
+                if (array_key_exists($key, $definition)) {
+                    $schema[$key] = $definition[$key];
+                }
+            }
+
+            $parameter = [
+                'in' => $isPath ? 'path' : 'query',
+                'name' => $name,
+                'required' => $isPath || (($definition['required'] ?? false) === true),
+                'schema' => $schema,
+            ];
+
+            $description = $this->stringOrNull($definition['description'] ?? null);
+            if ($description !== null && $description !== '') {
+                $parameter['description'] = $description;
+            }
+
+            $parameters[] = $parameter;
+        }
+
+        return $parameters;
+    }
+
+    /**
+     * Explicit OpenAPI meta wins over the derived WordPress argument while
+     * retaining every argument that was not documented manually.
+     *
+     * @param list<array<string, mixed>> $derived
+     * @param list<array<string, mixed>> $explicit
+     * @return list<array<string, mixed>>
+     */
+    private function mergeParameters(array $derived, array $explicit): array
+    {
+        $merged = [];
+
+        foreach (array_merge($derived, $explicit) as $parameter) {
+            $key = strtolower((string) ($parameter['in'] ?? 'query'))
+                . ':' . strtolower((string) ($parameter['name'] ?? ''));
+            if ($key === 'query:') {
+                continue;
+            }
+
+            $merged[$key] = $parameter;
+        }
+
+        return array_values($merged);
     }
 
     /**

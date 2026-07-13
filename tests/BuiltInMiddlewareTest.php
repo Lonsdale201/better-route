@@ -21,6 +21,8 @@ use BetterRoute\Middleware\Jwt\JwtVerifierInterface;
 use BetterRoute\Middleware\RateLimit\RateLimiterInterface;
 use BetterRoute\Middleware\RateLimit\RateLimitMiddleware;
 use BetterRoute\Middleware\RateLimit\RateLimitResult;
+use BetterRoute\Support\Canonicalizer;
+use BetterRoute\Support\RequestIdentity;
 use PHPUnit\Framework\TestCase;
 
 final class BuiltInMiddlewareTest extends TestCase
@@ -167,7 +169,10 @@ final class BuiltInMiddlewareTest extends TestCase
 
         $middleware->handle($context, static fn (): Response => new Response(['ok' => true], 200));
 
-        self::assertSame('/rate|jwt:sub:subject-1', $limiter->lastKey);
+        self::assertSame(Canonicalizer::json([
+            'route' => '/rate',
+            'identity' => RequestIdentity::key($context),
+        ]), $limiter->lastKey);
     }
 
     public function testETagMiddlewareAddsHeaderAndReturnsNotModified(): void
@@ -187,6 +192,31 @@ final class BuiltInMiddlewareTest extends TestCase
 
         self::assertInstanceOf(Response::class, $second);
         self::assertSame(304, $second->status);
+    }
+
+    public function testETagPreservesWordPressStyleResponseAndCacheHeaders(): void
+    {
+        $middleware = new ETagMiddleware();
+        $wpResponse = new FakeWpRestResponse(['ok' => true], 202, ['Cache-Control' => 'private']);
+        $first = $middleware->handle(
+            new RequestContext('req_wp_etag', '/etag', new MiddlewareRequest([], 'GET')),
+            static fn (): FakeWpRestResponse => $wpResponse
+        );
+
+        self::assertSame($wpResponse, $first);
+        self::assertSame(202, $first->get_status());
+        self::assertArrayHasKey('ETag', $first->get_headers());
+
+        $second = $middleware->handle(
+            new RequestContext('req_wp_etag_2', '/etag', new MiddlewareRequest([
+                'if-none-match' => 'W/' . $first->get_headers()['ETag'],
+            ], 'GET')),
+            static fn (): FakeWpRestResponse => $wpResponse
+        );
+
+        self::assertInstanceOf(Response::class, $second);
+        self::assertSame(304, $second->status);
+        self::assertSame('private', $second->headers['Cache-Control']);
     }
 
     public function testClientIpResolverOnlyTrustsForwardedHeaderFromTrustedProxy(): void
@@ -245,6 +275,55 @@ final class BuiltInMiddlewareTest extends TestCase
         self::assertSame(42, $logger->events[0]['authUserId']);
         self::assertSame('orders', $logger->events[0]['resource']);
         self::assertSame(sha1('raw-key'), $logger->events[0]['idempotencyKey']);
+    }
+
+    public function testAuditLoggerFailureDoesNotChangeTheRequestResult(): void
+    {
+        $logger = new class () implements AuditLoggerInterface {
+            public function log(array $event): void
+            {
+                throw new \RuntimeException('audit backend down');
+            }
+        };
+
+        $result = (new AuditMiddleware($logger))->handle(
+            new RequestContext('req_audit_failure', '/audit', new MiddlewareRequest([])),
+            static fn (): string => 'ok'
+        );
+
+        self::assertSame('ok', $result);
+    }
+}
+
+final class FakeWpRestResponse
+{
+    /** @param array<string, string> $headers */
+    public function __construct(
+        private readonly mixed $data,
+        private readonly int $status,
+        private array $headers = []
+    ) {
+    }
+
+    public function get_data(): mixed
+    {
+        return $this->data;
+    }
+
+    public function get_status(): int
+    {
+        return $this->status;
+    }
+
+    /** @return array<string, string> */
+    public function get_headers(): array
+    {
+        return $this->headers;
+    }
+
+    public function header(string $name, string $value): void
+    {
+        $this->headers[$name] = $value;
     }
 }
 

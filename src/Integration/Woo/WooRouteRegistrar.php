@@ -6,19 +6,24 @@ namespace BetterRoute\Integration\Woo;
 
 use BetterRoute\Http\ApiException;
 use BetterRoute\Http\Response;
-use BetterRoute\Middleware\Write\ArrayIdempotencyStore;
-use BetterRoute\Middleware\Write\IdempotencyMiddleware;
-use BetterRoute\Middleware\Write\IdempotencyStoreInterface;
-use BetterRoute\Middleware\Write\TransientIdempotencyStore;
+use BetterRoute\Middleware\Write\ArrayAtomicIdempotencyStore;
+use BetterRoute\Middleware\Write\AtomicIdempotencyMiddleware;
+use BetterRoute\Middleware\Write\AtomicIdempotencyStoreInterface;
+use BetterRoute\Middleware\Write\WpdbAtomicIdempotencyStore;
 use BetterRoute\Router\DispatcherInterface;
 use BetterRoute\Router\Router;
+use BetterRoute\Support\RestRequestParameters;
 use ReflectionException;
 use ReflectionFunction;
 use ReflectionMethod;
-use RuntimeException;
 
 final class WooRouteRegistrar
 {
+    private const DEFAULT_IDEMPOTENCY_SCHEMA_VERSION = '1.1.0';
+    private const DEFAULT_IDEMPOTENCY_SCHEMA_OPTION = 'better_route_atomic_idempotency_schema_version';
+
+    private ?AtomicIdempotencyStoreInterface $resolvedDefaultIdempotencyStore = null;
+
     public function __construct(
         private readonly HposGuard $guard = new HposGuard(),
         private readonly WooOrderService $orderService = new WooOrderService(),
@@ -42,7 +47,7 @@ final class WooRouteRegistrar
      *     enabled?: bool,
      *     requireKey?: bool,
      *     ttlSeconds?: int,
-     *     store?: IdempotencyStoreInterface,
+     *     store?: AtomicIdempotencyStoreInterface,
      *     resources?: array{orders?: bool, products?: bool, customers?: bool, coupons?: bool}
      *   }
      * } $options
@@ -68,10 +73,10 @@ final class WooRouteRegistrar
         $actions = is_array($options['actions'] ?? null) ? $options['actions'] : [];
         $idempotency = $this->resolveIdempotencyOptions($options['idempotency'] ?? null);
 
-        $orderActions = $this->resolveActions($actions['orders'] ?? null);
-        $productActions = $this->resolveActions($actions['products'] ?? null);
-        $customerActions = $this->resolveActions($actions['customers'] ?? null);
-        $couponActions = $this->resolveActions($actions['coupons'] ?? null);
+        $orderActions = $this->resolveActions($actions, 'orders');
+        $productActions = $this->resolveActions($actions, 'products');
+        $customerActions = $this->resolveActions($actions, 'customers');
+        $couponActions = $this->resolveActions($actions, 'coupons');
 
         $orderListParser = new OrderListQueryParser(
             allowedFields: $this->orderService->allowedFields(),
@@ -98,6 +103,26 @@ final class WooRouteRegistrar
         $productsUpdateIdempotency = $this->createIdempotencyMiddleware(
             $idempotency,
             'products',
+            ['PUT', 'PATCH']
+        );
+        $customersCreateIdempotency = $this->createIdempotencyMiddleware(
+            $idempotency,
+            'customers',
+            ['POST']
+        );
+        $customersUpdateIdempotency = $this->createIdempotencyMiddleware(
+            $idempotency,
+            'customers',
+            ['PUT', 'PATCH']
+        );
+        $couponsCreateIdempotency = $this->createIdempotencyMiddleware(
+            $idempotency,
+            'coupons',
+            ['POST']
+        );
+        $couponsUpdateIdempotency = $this->createIdempotencyMiddleware(
+            $idempotency,
+            'coupons',
             ['PUT', 'PATCH']
         );
         $productListParser = new ProductListQueryParser(
@@ -455,18 +480,24 @@ final class WooRouteRegistrar
         }
 
         if (in_array('create', $customerActions, true)) {
-            $router->post($basePath . '/customers', function (mixed $request): Response {
+            $customerCreateMeta = $this->withIdempotencyOpenApiMeta([
+                'operationId' => 'wooCustomersCreate',
+                'tags' => ['WooCustomers'],
+                'requestSchema' => '#/components/schemas/WooCustomerCreateInput',
+                'responseSchema' => '#/components/schemas/WooCustomerResponse',
+            ], $customersCreateIdempotency !== null, (bool) $idempotency['requireKey']);
+
+            $builder = $router->post($basePath . '/customers', function (mixed $request): Response {
                 $payload = $this->readPayload($request);
                 $item = $this->customerService->create($payload, $this->customerService->getDefaultFields());
                 return new Response(['data' => $item], 201);
             })
-                ->meta([
-                    'operationId' => 'wooCustomersCreate',
-                    'tags' => ['WooCustomers'],
-                    'requestSchema' => '#/components/schemas/WooCustomerInput',
-                    'responseSchema' => '#/components/schemas/WooCustomerResponse',
-                ])
+                ->meta($customerCreateMeta)
                 ->permission($this->resolvePermissionCallback($permissions['customers.create'] ?? 'manage_woocommerce'));
+
+            if ($customersCreateIdempotency !== null) {
+                $builder->middleware([$customersCreateIdempotency]);
+            }
         }
 
         if (in_array('update', $customerActions, true)) {
@@ -481,7 +512,7 @@ final class WooRouteRegistrar
                 return ['data' => $item];
             };
 
-            $customerUpdateMeta = [
+            $customerUpdateMeta = $this->withIdempotencyOpenApiMeta([
                 'operationId' => 'wooCustomersUpdate',
                 'tags' => ['WooCustomers'],
                 'parameters' => [
@@ -489,16 +520,21 @@ final class WooRouteRegistrar
                 ],
                 'requestSchema' => '#/components/schemas/WooCustomerInput',
                 'responseSchema' => '#/components/schemas/WooCustomerResponse',
-            ];
+            ], $customersUpdateIdempotency !== null, (bool) $idempotency['requireKey']);
 
-            $router->put($basePath . '/customers/(?P<id>\d+)', $updateCustomer)
+            $putBuilder = $router->put($basePath . '/customers/(?P<id>\d+)', $updateCustomer)
                 ->args(['id' => ['required' => true, 'type' => 'integer']])
                 ->meta($customerUpdateMeta)
                 ->permission($this->resolvePermissionCallback($permissions['customers.update'] ?? 'manage_woocommerce'));
-            $router->patch($basePath . '/customers/(?P<id>\d+)', $updateCustomer)
+            $patchBuilder = $router->patch($basePath . '/customers/(?P<id>\d+)', $updateCustomer)
                 ->args(['id' => ['required' => true, 'type' => 'integer']])
                 ->meta($customerUpdateMeta)
                 ->permission($this->resolvePermissionCallback($permissions['customers.update'] ?? 'manage_woocommerce'));
+
+            if ($customersUpdateIdempotency !== null) {
+                $putBuilder->middleware([$customersUpdateIdempotency]);
+                $patchBuilder->middleware([$customersUpdateIdempotency]);
+            }
         }
 
         if (in_array('delete', $customerActions, true)) {
@@ -573,18 +609,24 @@ final class WooRouteRegistrar
         }
 
         if (in_array('create', $couponActions, true)) {
-            $router->post($basePath . '/coupons', function (mixed $request): Response {
+            $couponCreateMeta = $this->withIdempotencyOpenApiMeta([
+                'operationId' => 'wooCouponsCreate',
+                'tags' => ['WooCoupons'],
+                'requestSchema' => '#/components/schemas/WooCouponCreateInput',
+                'responseSchema' => '#/components/schemas/WooCouponResponse',
+            ], $couponsCreateIdempotency !== null, (bool) $idempotency['requireKey']);
+
+            $builder = $router->post($basePath . '/coupons', function (mixed $request): Response {
                 $payload = $this->readPayload($request);
                 $item = $this->couponService->create($payload, $this->couponService->getDefaultFields());
                 return new Response(['data' => $item], 201);
             })
-                ->meta([
-                    'operationId' => 'wooCouponsCreate',
-                    'tags' => ['WooCoupons'],
-                    'requestSchema' => '#/components/schemas/WooCouponInput',
-                    'responseSchema' => '#/components/schemas/WooCouponResponse',
-                ])
+                ->meta($couponCreateMeta)
                 ->permission($this->resolvePermissionCallback($permissions['coupons.create'] ?? 'manage_woocommerce'));
+
+            if ($couponsCreateIdempotency !== null) {
+                $builder->middleware([$couponsCreateIdempotency]);
+            }
         }
 
         if (in_array('update', $couponActions, true)) {
@@ -599,7 +641,7 @@ final class WooRouteRegistrar
                 return ['data' => $item];
             };
 
-            $couponUpdateMeta = [
+            $couponUpdateMeta = $this->withIdempotencyOpenApiMeta([
                 'operationId' => 'wooCouponsUpdate',
                 'tags' => ['WooCoupons'],
                 'parameters' => [
@@ -607,16 +649,21 @@ final class WooRouteRegistrar
                 ],
                 'requestSchema' => '#/components/schemas/WooCouponInput',
                 'responseSchema' => '#/components/schemas/WooCouponResponse',
-            ];
+            ], $couponsUpdateIdempotency !== null, (bool) $idempotency['requireKey']);
 
-            $router->put($basePath . '/coupons/(?P<id>\d+)', $updateCoupon)
+            $putBuilder = $router->put($basePath . '/coupons/(?P<id>\d+)', $updateCoupon)
                 ->args(['id' => ['required' => true, 'type' => 'integer']])
                 ->meta($couponUpdateMeta)
                 ->permission($this->resolvePermissionCallback($permissions['coupons.update'] ?? 'manage_woocommerce'));
-            $router->patch($basePath . '/coupons/(?P<id>\d+)', $updateCoupon)
+            $patchBuilder = $router->patch($basePath . '/coupons/(?P<id>\d+)', $updateCoupon)
                 ->args(['id' => ['required' => true, 'type' => 'integer']])
                 ->meta($couponUpdateMeta)
                 ->permission($this->resolvePermissionCallback($permissions['coupons.update'] ?? 'manage_woocommerce'));
+
+            if ($couponsUpdateIdempotency !== null) {
+                $putBuilder->middleware([$couponsUpdateIdempotency]);
+                $patchBuilder->middleware([$couponsUpdateIdempotency]);
+            }
         }
 
         if (in_array('delete', $couponActions, true)) {
@@ -678,7 +725,7 @@ final class WooRouteRegistrar
      *   enabled: bool,
      *   requireKey: bool,
      *   ttlSeconds: int,
-     *   store: IdempotencyStoreInterface|null,
+     *   store: AtomicIdempotencyStoreInterface|null,
      *   resources: array{orders: bool, products: bool, customers: bool, coupons: bool}
      * }
      */
@@ -688,8 +735,8 @@ final class WooRouteRegistrar
         $resourcesRaw = is_array($raw['resources'] ?? null) ? $raw['resources'] : [];
         $store = $raw['store'] ?? null;
 
-        if ($store !== null && !$store instanceof IdempotencyStoreInterface) {
-            throw new \InvalidArgumentException('idempotency.store must implement IdempotencyStoreInterface.');
+        if ($store !== null && !$store instanceof AtomicIdempotencyStoreInterface) {
+            throw new \InvalidArgumentException('idempotency.store must implement AtomicIdempotencyStoreInterface.');
         }
 
         return [
@@ -711,7 +758,7 @@ final class WooRouteRegistrar
      *   enabled: bool,
      *   requireKey: bool,
      *   ttlSeconds: int,
-     *   store: IdempotencyStoreInterface|null,
+     *   store: AtomicIdempotencyStoreInterface|null,
      *   resources: array{orders: bool, products: bool, customers: bool, coupons: bool}
      * } $options
      * @param list<string> $methods
@@ -720,7 +767,7 @@ final class WooRouteRegistrar
         array $options,
         string $resource,
         array $methods
-    ): ?IdempotencyMiddleware {
+    ): ?AtomicIdempotencyMiddleware {
         if (!$options['enabled']) {
             return null;
         }
@@ -731,7 +778,7 @@ final class WooRouteRegistrar
 
         $store = $options['store'] ?? $this->defaultIdempotencyStore();
 
-        return new IdempotencyMiddleware(
+        return new AtomicIdempotencyMiddleware(
             store: $store,
             ttlSeconds: $options['ttlSeconds'],
             requireKey: $options['requireKey'],
@@ -739,17 +786,33 @@ final class WooRouteRegistrar
         );
     }
 
-    private function defaultIdempotencyStore(): IdempotencyStoreInterface
+    private function defaultIdempotencyStore(): AtomicIdempotencyStoreInterface
     {
-        if (function_exists('get_transient') && function_exists('set_transient')) {
-            try {
-                return new TransientIdempotencyStore();
-            } catch (RuntimeException) {
-                // Fallback for non-WP runtime.
-            }
+        if ($this->resolvedDefaultIdempotencyStore !== null) {
+            return $this->resolvedDefaultIdempotencyStore;
         }
 
-        return new ArrayIdempotencyStore();
+        if (isset($GLOBALS['wpdb']) && is_object($GLOBALS['wpdb'])) {
+            $store = new WpdbAtomicIdempotencyStore();
+            $installedVersion = function_exists('get_option')
+                ? get_option(self::DEFAULT_IDEMPOTENCY_SCHEMA_OPTION, '')
+                : '';
+            if ($installedVersion !== self::DEFAULT_IDEMPOTENCY_SCHEMA_VERSION) {
+                $store->installSchema();
+                if (function_exists('update_option')) {
+                    update_option(
+                        self::DEFAULT_IDEMPOTENCY_SCHEMA_OPTION,
+                        self::DEFAULT_IDEMPOTENCY_SCHEMA_VERSION,
+                        false
+                    );
+                }
+            }
+            $this->resolvedDefaultIdempotencyStore = $store;
+            return $this->resolvedDefaultIdempotencyStore;
+        }
+
+        $this->resolvedDefaultIdempotencyStore = new ArrayAtomicIdempotencyStore();
+        return $this->resolvedDefaultIdempotencyStore;
     }
 
     private function resolveDeleteMode(mixed $value): string
@@ -891,21 +954,38 @@ final class WooRouteRegistrar
     }
 
     /**
+     * @param array<string, mixed> $actions
      * @return list<string>
      */
-    private function resolveActions(mixed $value): array
+    private function resolveActions(array $actions, string $resource): array
     {
         $default = ['list', 'get', 'create', 'update', 'delete'];
-        if (!is_array($value)) {
+        if (!array_key_exists($resource, $actions)) {
             return $default;
         }
 
-        $allowed = array_values(array_filter(
-            array_map(static fn (mixed $action): string => is_string($action) ? trim(strtolower($action)) : '', $value),
-            static fn (string $action): bool => in_array($action, $default, true)
-        ));
+        $value = $actions[$resource];
+        if (!is_array($value)) {
+            throw new \InvalidArgumentException(sprintf('actions.%s must be an array.', $resource));
+        }
 
-        return $allowed === [] ? $default : $allowed;
+        $allowed = array_map(
+            static fn (mixed $action): string => is_string($action) ? trim(strtolower($action)) : '',
+            $value
+        );
+        $invalid = array_values(array_filter(
+            $allowed,
+            static fn (string $action): bool => !in_array($action, $default, true)
+        ));
+        if ($invalid !== []) {
+            throw new \InvalidArgumentException(sprintf(
+                'Unsupported actions.%s value: %s',
+                $resource,
+                implode(', ', $invalid)
+            ));
+        }
+
+        return array_values(array_unique($allowed));
     }
 
     /**
@@ -978,6 +1058,7 @@ final class WooRouteRegistrar
      */
     private function assertAllowedParams(mixed $request, array $allowed): void
     {
+        $allowed = RestRequestParameters::allowedWithGlobals($allowed);
         $params = [];
         if (is_object($request) && method_exists($request, 'get_params')) {
             $raw = $request->get_params();

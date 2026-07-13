@@ -103,6 +103,10 @@ final class Hs256JwtVerifier implements JwtVerifierInterface
     {
         $now = ($this->now)();
 
+        if ($this->maxLifetimeSeconds !== null && (!isset($claims['iat']) || !isset($claims['exp']))) {
+            throw new RuntimeException('JWT iat and exp are required when max lifetime is configured.');
+        }
+
         if ($this->requireExpiration && !isset($claims['exp'])) {
             throw new RuntimeException('JWT exp is required.');
         }
@@ -127,7 +131,7 @@ final class Hs256JwtVerifier implements JwtVerifierInterface
                 throw new RuntimeException('JWT expired.');
             }
 
-            if ($this->maxLifetimeSeconds !== null && isset($claims['iat'])) {
+            if ($this->maxLifetimeSeconds !== null) {
                 $issuedAt = $this->parseNumericClaim($claims['iat'], 'iat');
                 if ($expiresAt - $issuedAt > $this->maxLifetimeSeconds) {
                     throw new RuntimeException('JWT lifetime is too long.');

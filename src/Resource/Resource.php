@@ -25,6 +25,7 @@ final class Resource
 {
     /** @var list<string> */
     private array $allowedActions = [];
+    private bool $actionsConfigured = false;
 
     /** @var list<string> */
     private array $fields = [];
@@ -88,12 +89,20 @@ final class Resource
 
     public function sourceCpt(string $postType): self
     {
+        if ($this->sourceTable !== null) {
+            throw new InvalidArgumentException('A resource cannot use both sourceCpt and sourceTable.');
+        }
+
         $this->sourceCpt = $postType;
         return $this;
     }
 
     public function sourceTable(string $table, string $primaryKey = 'id'): self
     {
+        if ($this->sourceCpt !== null) {
+            throw new InvalidArgumentException('A resource cannot use both sourceCpt and sourceTable.');
+        }
+
         $this->sourceTable = $table;
         $this->primaryKey = $primaryKey;
         return $this;
@@ -104,7 +113,21 @@ final class Resource
      */
     public function allow(array $actions): self
     {
-        $this->allowedActions = array_values($actions);
+        $supported = ['list', 'get', 'create', 'update', 'delete'];
+        $normalized = array_map(
+            static fn (string $action): string => strtolower(trim($action)),
+            $actions
+        );
+        $invalid = array_values(array_filter(
+            $normalized,
+            static fn (string $action): bool => !in_array($action, $supported, true)
+        ));
+        if ($invalid !== []) {
+            throw new InvalidArgumentException('Unsupported resource action: ' . implode(', ', $invalid));
+        }
+
+        $this->actionsConfigured = true;
+        $this->allowedActions = array_values(array_unique($normalized));
         return $this;
     }
 
@@ -184,22 +207,28 @@ final class Resource
 
     public function defaultPerPage(int $defaultPerPage): self
     {
+        if ($defaultPerPage < 1) {
+            throw new InvalidArgumentException('defaultPerPage must be greater than 0.');
+        }
         $this->defaultPerPage = $defaultPerPage;
-        $this->assertPaginationConfiguration();
         return $this;
     }
 
     public function maxPerPage(int $maxPerPage): self
     {
+        if ($maxPerPage < 1) {
+            throw new InvalidArgumentException('maxPerPage must be greater than 0.');
+        }
         $this->maxPerPage = $maxPerPage;
-        $this->assertPaginationConfiguration();
         return $this;
     }
 
     public function maxOffset(int $maxOffset): self
     {
+        if ($maxOffset < 0) {
+            throw new InvalidArgumentException('maxOffset must be greater than or equal to 0.');
+        }
         $this->maxOffset = $maxOffset;
-        $this->assertPaginationConfiguration();
         return $this;
     }
 
@@ -365,22 +394,20 @@ final class Resource
             maxOffset: $this->maxOffset
         );
         $postType = $this->requireString($this->sourceCpt, 'sourceCpt is required.');
-        $allowed = $this->allowedActions !== [] ? $this->allowedActions : ['list', 'get', 'create', 'update', 'delete'];
+        $allowed = $this->actionsConfigured ? $this->allowedActions : ['list', 'get', 'create', 'update', 'delete'];
 
         if (in_array('list', $allowed, true)) {
             $router->get('/' . $this->name, function (mixed $request) use ($repository, $queryParser, $postType): array {
                 $query = $queryParser->parse($request);
                 $query = $this->applyDefaultCptStatusFilter($query);
-                $result = $repository->list($postType, $query);
-                $items = $this->filterVisibleCptItems($result['items'], 'list');
-                $total = $this->resolveVisibleCptListTotal($result, $items);
+                $result = $this->visibleCptList($repository, $postType, $query);
 
                 return [
-                    'data' => $items,
+                    'data' => $result['items'],
                     'meta' => [
                         'page' => $result['page'],
                         'perPage' => $result['perPage'],
-                        'total' => $total,
+                        'total' => $result['total'],
                     ],
                 ];
             })->args($this->listRouteArgs($filterSchema))
@@ -395,15 +422,18 @@ final class Resource
         if (in_array('get', $allowed, true)) {
             $router->get('/' . $this->name . '/(?P<id>\d+)', function (mixed $request) use ($repository, $postType, $fields): array {
                 $id = $this->readId($request);
-                $item = $repository->get($postType, $id, $fields);
+                $visibilityFields = $this->cptVisibilityFields($fields);
+                $visibilityItem = $repository->get($postType, $id, $visibilityFields);
 
-                if ($item === null) {
+                if ($visibilityItem === null) {
                     throw new ApiException('Resource not found.', 404, 'not_found');
                 }
 
-                if (!$this->isCptItemVisible($item, 'get')) {
+                if (!$this->isCptItemVisible($visibilityItem, 'get')) {
                     throw new ApiException('Resource not found.', 404, 'not_found');
                 }
+
+                $item = $this->projectCptItem($visibilityItem, $fields);
 
                 if ($this->uniformEnvelope) {
                     return ['data' => $item];
@@ -424,6 +454,7 @@ final class Resource
                     'schema' => ['type' => 'integer'],
                 ]],
                 responseSchema: '#/components/schemas/' . $this->resourceSchemaBase()
+                    . ($this->uniformEnvelope ? 'Response' : '')
             ))
                 ->permission($this->permissionForAction('get'));
         }
@@ -436,7 +467,7 @@ final class Resource
             })->meta($this->resourceRouteMeta(
                 action: 'create',
                 parameters: [],
-                responseSchema: '#/components/schemas/' . $this->resourceSchemaBase(),
+                responseSchema: '#/components/schemas/' . $this->resourceSchemaBase() . 'Response',
                 requestSchema: '#/components/schemas/' . $this->resourceSchemaBase() . 'Input'
             ))
                 ->permission($this->permissionForAction('create'));
@@ -462,7 +493,7 @@ final class Resource
                     'required' => true,
                     'schema' => ['type' => 'integer'],
                 ]],
-                responseSchema: '#/components/schemas/' . $this->resourceSchemaBase(),
+                responseSchema: '#/components/schemas/' . $this->resourceSchemaBase() . 'Response',
                 requestSchema: '#/components/schemas/' . $this->resourceSchemaBase() . 'Input'
             );
 
@@ -527,7 +558,7 @@ final class Resource
             maxOffset: $this->maxOffset
         );
 
-        $allowed = $this->allowedActions !== [] ? $this->allowedActions : ['list', 'get', 'create', 'update', 'delete'];
+        $allowed = $this->actionsConfigured ? $this->allowedActions : ['list', 'get', 'create', 'update', 'delete'];
 
         if (in_array('list', $allowed, true)) {
             $router->get('/' . $this->name, function (mixed $request) use ($repository, $queryParser, $table, $primaryKey): array {
@@ -579,6 +610,7 @@ final class Resource
                     'schema' => ['type' => 'integer'],
                 ]],
                 responseSchema: '#/components/schemas/' . $this->resourceSchemaBase()
+                    . ($this->uniformEnvelope ? 'Response' : '')
             ))
                 ->permission($this->permissionForAction('get'));
         }
@@ -591,7 +623,7 @@ final class Resource
             })->meta($this->resourceRouteMeta(
                 action: 'create',
                 parameters: [],
-                responseSchema: '#/components/schemas/' . $this->resourceSchemaBase(),
+                responseSchema: '#/components/schemas/' . $this->resourceSchemaBase() . 'Response',
                 requestSchema: '#/components/schemas/' . $this->resourceSchemaBase() . 'Input'
             ))
                 ->permission($this->permissionForAction('create'));
@@ -617,7 +649,7 @@ final class Resource
                     'required' => true,
                     'schema' => ['type' => 'integer'],
                 ]],
-                responseSchema: '#/components/schemas/' . $this->resourceSchemaBase(),
+                responseSchema: '#/components/schemas/' . $this->resourceSchemaBase() . 'Response',
                 requestSchema: '#/components/schemas/' . $this->resourceSchemaBase() . 'Input'
             );
 
@@ -740,10 +772,10 @@ final class Resource
         string $responseSchema,
         ?string $requestSchema = null
     ): array {
-        return [
+        $meta = [
             'resource' => $this->name,
             'action' => $action,
-            'policy' => $this->policy,
+            'policy' => $this->openApiPolicyMetadata(),
             'operationId' => $this->resourceOperationId($action),
             'tags' => [$this->resourceTag()],
             'scopes' => $this->policyScopes(),
@@ -751,6 +783,64 @@ final class Resource
             'requestSchema' => $requestSchema,
             'responseSchema' => $responseSchema,
         ];
+
+        if ($this->isActionExplicitlyPublic($action)) {
+            $meta['security'] = [];
+        }
+
+        return $meta;
+    }
+
+    /** @return array<string, mixed> */
+    private function openApiPolicyMetadata(): array
+    {
+        $metadata = [
+            'public' => ($this->policy['public'] ?? false) === true,
+            'scopes' => $this->policyScopes(),
+        ];
+
+        $permissions = is_array($this->policy['permissions'] ?? null)
+            ? $this->policy['permissions']
+            : [];
+        $safePermissions = [];
+        foreach ($permissions as $action => $rule) {
+            if (is_bool($rule) || is_string($rule)) {
+                $safePermissions[$action] = $rule;
+                continue;
+            }
+
+            if (is_array($rule)) {
+                $safePermissions[$action] = array_values(array_filter(
+                    $rule,
+                    static fn (mixed $capability): bool => is_string($capability)
+                ));
+                continue;
+            }
+
+            if (is_callable($rule)) {
+                $safePermissions[$action] = 'callback';
+            }
+        }
+
+        if ($safePermissions !== []) {
+            $metadata['permissions'] = $safePermissions;
+        }
+
+        return $metadata;
+    }
+
+    private function isActionExplicitlyPublic(string $action): bool
+    {
+        if (($this->policy['public'] ?? false) === true) {
+            return true;
+        }
+
+        $permissions = $this->policy['permissions'] ?? null;
+        if (!is_array($permissions)) {
+            return false;
+        }
+
+        return ($permissions[$action] ?? ($permissions['*'] ?? null)) === true;
     }
 
     private function resourceOperationId(string $action): string
@@ -834,10 +924,9 @@ final class Resource
 
     private function defaultPermissionForAction(string $action): callable
     {
-        // CPT reads still have a WordPress visibility model; raw table reads do not.
         return match ($action) {
             'list', 'get' => $this->sourceCpt !== null
-                ? static fn (): bool => true
+                ? fn (): bool => $this->isCptPubliclyViewable($this->sourceCpt)
                 : static fn (): bool => false,
             default => static fn (): bool => false,
         };
@@ -995,38 +1084,74 @@ final class Resource
     }
 
     /**
-     * @param array{total?: mixed} $result
-     * @param list<array<string, mixed>> $visibleItems
+     * @return array{items: list<array<string, mixed>>, total: int, page: int, perPage: int}
      */
-    private function resolveVisibleCptListTotal(array $result, array $visibleItems): int
+    private function visibleCptList(CptRepositoryInterface $repository, string $postType, CptListQuery $query): array
     {
-        if (is_callable($this->cptVisibilityPolicy)) {
-            // With custom per-item visibility we avoid leaking hidden totals.
-            return count($visibleItems);
-        }
+        $requestedFields = $query->fields;
+        $scanFields = $this->cptVisibilityFields($requestedFields);
 
-        $total = $result['total'] ?? null;
-        if (is_int($total) && $total >= 0) {
-            return $total;
-        }
+        if (!is_callable($this->cptVisibilityPolicy)) {
+            $result = $repository->list($postType, new CptListQuery(
+                fields: $scanFields,
+                filters: $query->filters,
+                sortField: $query->sortField,
+                sortDirection: $query->sortDirection,
+                page: $query->page,
+                perPage: $query->perPage
+            ));
 
-        return count($visibleItems);
-    }
-
-    /**
-     * @param list<array<string, mixed>> $items
-     * @return list<array<string, mixed>>
-     */
-    private function filterVisibleCptItems(array $items, string $action): array
-    {
-        $result = [];
-        foreach ($items as $item) {
-            if ($this->isCptItemVisible($item, $action)) {
-                $result[] = $item;
+            $items = [];
+            foreach ($result['items'] as $item) {
+                if ($this->isCptItemVisible($item, 'list')) {
+                    $items[] = $this->projectCptItem($item, $requestedFields);
+                }
             }
+
+            return [
+                'items' => $items,
+                'total' => (int) $result['total'],
+                'page' => $query->page,
+                'perPage' => $query->perPage,
+            ];
         }
 
-        return $result;
+        // An arbitrary PHP visibility callback cannot be represented safely as
+        // a WP_Query condition. Scan stable repository pages so both pagination
+        // and total describe the visible result set rather than the raw posts.
+        $visible = [];
+        $scanPage = 1;
+        $scanPerPage = max(1, $this->maxPerPage);
+        $rawTotal = null;
+
+        do {
+            $batch = $repository->list($postType, new CptListQuery(
+                fields: $scanFields,
+                filters: $query->filters,
+                sortField: $query->sortField,
+                sortDirection: $query->sortDirection,
+                page: $scanPage,
+                perPage: $scanPerPage
+            ));
+            $rawTotal ??= max(0, (int) $batch['total']);
+
+            foreach ($batch['items'] as $item) {
+                if ($this->isCptItemVisible($item, 'list')) {
+                    $visible[] = $this->projectCptItem($item, $requestedFields);
+                }
+            }
+
+            $scanPage++;
+        } while (($scanPage - 1) * $scanPerPage < $rawTotal);
+
+        $offset = ($query->page - 1) * $query->perPage;
+
+        return [
+            'items' => array_values(array_slice($visible, $offset, $query->perPage)),
+            'total' => count($visible),
+            'page' => $query->page,
+            'perPage' => $query->perPage,
+        ];
     }
 
     /**
@@ -1035,13 +1160,69 @@ final class Resource
     private function isCptItemVisible(array $item, string $action): bool
     {
         $status = $item['status'] ?? null;
-        $visible = !is_string($status) || in_array($status, $this->cptVisibleStatuses, true);
+        $visible = is_string($status) && in_array($status, $this->cptVisibleStatuses, true);
+        $visible = $visible && (($item['publicly_queryable'] ?? true) === true);
+
+        if (($item['password_protected'] ?? false) === true && ($item['can_read'] ?? false) !== true) {
+            $visible = false;
+        }
 
         if (is_callable($this->cptVisibilityPolicy)) {
             $visible = $visible && (bool) ($this->cptVisibilityPolicy)($item, $action);
         }
 
         return $visible;
+    }
+
+    /**
+     * @param list<string> $fields
+     * @return list<string>
+     */
+    private function cptVisibilityFields(array $fields): array
+    {
+        return array_values(array_unique(array_merge(
+            $fields,
+            ['id', 'status', 'password_protected', 'publicly_queryable', 'can_read']
+        )));
+    }
+
+    /**
+     * @param array<string, mixed> $item
+     * @param list<string> $fields
+     * @return array<string, mixed>
+     */
+    private function projectCptItem(array $item, array $fields): array
+    {
+        $projected = [];
+        foreach ($fields as $field) {
+            if (array_key_exists($field, $item)) {
+                $projected[$field] = $item[$field];
+            }
+        }
+
+        return $projected;
+    }
+
+    private function isCptPubliclyViewable(?string $postType): bool
+    {
+        if ($postType === null || $postType === '') {
+            return false;
+        }
+
+        if (!function_exists('get_post_type_object')) {
+            return true;
+        }
+
+        $object = get_post_type_object($postType);
+        if (!is_object($object)) {
+            return false;
+        }
+
+        if (function_exists('is_post_type_viewable')) {
+            return (bool) is_post_type_viewable($object);
+        }
+
+        return $object->publicly_queryable === true;
     }
 
     /**

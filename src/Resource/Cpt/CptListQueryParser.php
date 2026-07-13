@@ -5,6 +5,7 @@ declare(strict_types=1);
 namespace BetterRoute\Resource\Cpt;
 
 use BetterRoute\Http\ApiException;
+use BetterRoute\Support\RestRequestParameters;
 use DateTimeImmutable;
 use InvalidArgumentException;
 
@@ -92,7 +93,10 @@ final class CptListQueryParser
      */
     private function assertUnknownParams(array $params): void
     {
-        $allowed = array_merge($this->allowedFilters, ['fields', 'sort', 'page', 'per_page']);
+        $allowed = RestRequestParameters::allowedWithGlobals(array_merge(
+            $this->allowedFilters,
+            ['fields', 'sort', 'page', 'per_page']
+        ));
         $unknown = array_values(array_filter(
             array_keys($params),
             static fn (string $key): bool => !in_array($key, $allowed, true)

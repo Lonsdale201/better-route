@@ -38,10 +38,11 @@ final class WooOpenApiComponents
                         'email' => ['type' => 'string'],
                         'phone' => ['type' => 'string'],
                     ],
-                    'additionalProperties' => true,
+                    'additionalProperties' => false,
                 ],
                 'WooOrderLineItemInput' => [
                     'type' => 'object',
+                    'required' => ['product_id'],
                     'properties' => [
                         'product_id' => ['type' => 'integer'],
                         'variation_id' => ['type' => 'integer'],
@@ -161,7 +162,6 @@ final class WooOpenApiComponents
                         'status' => ['type' => 'string'],
                         'type' => ['type' => 'string'],
                         'sku' => ['type' => 'string'],
-                        'price' => ['type' => 'string'],
                         'regular_price' => ['type' => 'string'],
                         'sale_price' => ['type' => 'string'],
                         'catalog_visibility' => ['type' => 'string'],
@@ -252,7 +252,7 @@ final class WooOpenApiComponents
                         'email' => ['type' => 'string'],
                         'phone' => ['type' => 'string'],
                     ],
-                    'additionalProperties' => true,
+                    'additionalProperties' => false,
                 ],
                 'WooCustomerInput' => [
                     'type' => 'object',
@@ -270,6 +270,12 @@ final class WooOpenApiComponents
                         ],
                     ],
                     'additionalProperties' => false,
+                ],
+                'WooCustomerCreateInput' => [
+                    'allOf' => [
+                        ['$ref' => '#/components/schemas/WooCustomerInput'],
+                        ['required' => ['email']],
+                    ],
                 ],
                 'WooCustomer' => [
                     'type' => 'object',
@@ -350,6 +356,12 @@ final class WooOpenApiComponents
                         ],
                     ],
                     'additionalProperties' => false,
+                ],
+                'WooCouponCreateInput' => [
+                    'allOf' => [
+                        ['$ref' => '#/components/schemas/WooCouponInput'],
+                        ['required' => ['code']],
+                    ],
                 ],
                 'WooCoupon' => [
                     'type' => 'object',

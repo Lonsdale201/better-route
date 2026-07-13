@@ -79,10 +79,16 @@ final class HmacSignatureMiddleware implements MiddlewareInterface
             throw new ApiException('Invalid signature.', 401, 'invalid_signature');
         }
 
-        return $next($context->withAttribute('hmac', [
+        $authenticated = $context->withAttribute('hmac', [
             'keyId' => $keyId,
             'algorithm' => $this->algorithm,
-        ]));
+        ]);
+        $authenticated = AuthContext::withIdentity(
+            $authenticated,
+            new AuthIdentity(provider: 'hmac', subject: $keyId)
+        );
+
+        return $next($authenticated);
     }
 
     private function matchesSignature(string $signature, string $canonical, string $secret): bool

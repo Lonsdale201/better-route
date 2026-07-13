@@ -23,11 +23,17 @@ final class HttpJwksProvider implements JwksProviderInterface
     /** @var callable(string): bool */
     private $deleteTransient;
 
+    /** @var callable(): int */
+    private $now;
+
+    private ?int $lastRefreshAt = null;
+
     /**
      * @param null|callable(string): string $httpGet
      * @param null|callable(string): mixed $getTransient
      * @param null|callable(string, mixed, int): bool $setTransient
      * @param null|callable(string): bool $deleteTransient
+     * @param null|callable(): int $now
      */
     public function __construct(
         private readonly string $jwksUri,
@@ -37,13 +43,23 @@ final class HttpJwksProvider implements JwksProviderInterface
         ?callable $httpGet = null,
         ?callable $getTransient = null,
         ?callable $setTransient = null,
-        ?callable $deleteTransient = null
+        ?callable $deleteTransient = null,
+        private readonly int $minimumRefreshIntervalSeconds = 30,
+        ?callable $now = null
     ) {
-        if ((string) parse_url($jwksUri, PHP_URL_SCHEME) !== 'https') {
+        $parts = parse_url($jwksUri);
+        if (!is_array($parts)
+            || ($parts['scheme'] ?? null) !== 'https'
+            || !isset($parts['host'])
+            || isset($parts['user'], $parts['pass'])
+        ) {
             throw new RuntimeException('JWKS URI must use https.');
         }
         if ($ttlSeconds < 1) {
             throw new RuntimeException('JWKS cache TTL must be positive.');
+        }
+        if ($minimumRefreshIntervalSeconds < 0) {
+            throw new RuntimeException('JWKS minimum refresh interval must not be negative.');
         }
 
         $this->cacheKey = $cacheKey ?? ('better_route_jwks_' . sha1($jwksUri));
@@ -51,6 +67,7 @@ final class HttpJwksProvider implements JwksProviderInterface
         $this->getTransient = $getTransient ?? $this->defaultGetTransient();
         $this->setTransient = $setTransient ?? $this->defaultSetTransient();
         $this->deleteTransient = $deleteTransient ?? $this->defaultDeleteTransient();
+        $this->now = $now ?? static fn (): int => time();
 
         $this->registerRefreshAction();
     }
@@ -63,32 +80,63 @@ final class HttpJwksProvider implements JwksProviderInterface
             return $this->memoryKeys;
         }
 
-        $cached = ($this->getTransient)($this->cacheKey);
-        if (is_array($cached)) {
-            $keys = JwksKeySanitizer::sanitizeKeys(array_values($cached));
-            if ($keys !== []) {
-                $this->memoryKeys = $keys;
-                return $keys;
-            }
+        $cachedKeys = $this->cachedKeys();
+        if ($cachedKeys !== null) {
+            $this->memoryKeys = $cachedKeys;
+            return $cachedKeys;
         }
 
-        $this->memoryKeys = $this->fetchKeys();
-        ($this->setTransient)($this->cacheKey, $this->memoryKeys, $this->ttlSeconds);
+        $this->withRefreshLock(function (): void {
+            $cachedKeys = $this->cachedKeys();
+            if ($cachedKeys !== null) {
+                $this->memoryKeys = $cachedKeys;
+                return;
+            }
+
+            $this->memoryKeys = $this->fetchKeys();
+            ($this->setTransient)($this->cacheKey, $this->memoryKeys, $this->ttlSeconds);
+            $this->markRefreshed();
+        });
+
+        if ($this->memoryKeys === null) {
+            // A lock holder may have completed just as our bounded wait ended.
+            $this->memoryKeys = $this->cachedKeys();
+        }
+        if ($this->memoryKeys === null) {
+            throw new RuntimeException('Unable to acquire JWKS refresh lock.');
+        }
 
         return $this->memoryKeys;
     }
 
     public function refresh(): void
     {
-        $this->clearCache();
-        $this->memoryKeys = $this->fetchKeys();
-        ($this->setTransient)($this->cacheKey, $this->memoryKeys, $this->ttlSeconds);
+        if (!$this->mayRefresh()) {
+            return;
+        }
+
+        $this->withRefreshLock(function (): void {
+            // Another request may have refreshed while this request waited for
+            // the database lock. Re-check the persistent cooldown inside it.
+            if (!$this->mayRefresh()) {
+                return;
+            }
+
+            // Mark before I/O to throttle failures as well as successful fetches.
+            // Keep the last known-good keys intact if the fetch fails.
+            $this->markRefreshed();
+            $freshKeys = $this->fetchKeys();
+            $this->memoryKeys = $freshKeys;
+            ($this->setTransient)($this->cacheKey, $freshKeys, $this->ttlSeconds);
+        });
     }
 
     public function clearCache(): void
     {
         $this->memoryKeys = null;
         ($this->deleteTransient)($this->cacheKey);
+        $this->lastRefreshAt = null;
+        ($this->deleteTransient)($this->refreshKey());
     }
 
     /**
@@ -110,17 +158,32 @@ final class HttpJwksProvider implements JwksProviderInterface
         return $keys;
     }
 
+    /** @return null|list<array<string, string>> */
+    private function cachedKeys(): ?array
+    {
+        $cached = ($this->getTransient)($this->cacheKey);
+        if (!is_array($cached)) {
+            return null;
+        }
+
+        $keys = JwksKeySanitizer::sanitizeKeys(array_values($cached));
+        return $keys !== [] ? $keys : null;
+    }
+
     /**
      * @return callable(string): string
      */
     private function defaultHttpGet(): callable
     {
         return static function (string $uri): string {
-            if (!function_exists('wp_remote_retrieve_response_code') || !function_exists('wp_remote_retrieve_body')) {
+            if (!function_exists('wp_safe_remote_get')
+                || !function_exists('wp_remote_retrieve_response_code')
+                || !function_exists('wp_remote_retrieve_body')
+            ) {
                 throw new RuntimeException('WordPress HTTP API is unavailable.');
             }
 
-            // Prefer wp_safe_remote_get(): it applies WordPress's SSRF guard
+            // Require wp_safe_remote_get(): it applies WordPress's SSRF guard
             // (blocks internal/loopback hosts). Bound redirects and response
             // size so a hostile or misbehaving issuer cannot pivot internally
             // or exhaust memory. JWKS documents are small and public.
@@ -132,13 +195,7 @@ final class HttpJwksProvider implements JwksProviderInterface
                 'limit_response_size' => 256 * 1024,
             ];
 
-            if (function_exists('wp_safe_remote_get')) {
-                $response = wp_safe_remote_get($uri, $args);
-            } elseif (function_exists('wp_remote_get')) {
-                $response = wp_remote_get($uri, $args);
-            } else {
-                throw new RuntimeException('WordPress HTTP API is unavailable.');
-            }
+            $response = wp_safe_remote_get($uri, $args);
 
             if (function_exists('is_wp_error') && is_wp_error($response)) {
                 throw new RuntimeException('Unable to fetch JWKS.');
@@ -198,5 +255,59 @@ final class HttpJwksProvider implements JwksProviderInterface
                 $this->clearCache();
             }
         }, 10, 1);
+    }
+
+    private function mayRefresh(): bool
+    {
+        $now = ($this->now)();
+        if ($this->lastRefreshAt !== null
+            && $now - $this->lastRefreshAt < $this->minimumRefreshIntervalSeconds
+        ) {
+            return false;
+        }
+
+        $persisted = ($this->getTransient)($this->refreshKey());
+        return !is_numeric($persisted)
+            || $now - (int) $persisted >= $this->minimumRefreshIntervalSeconds;
+    }
+
+    private function markRefreshed(): void
+    {
+        $this->lastRefreshAt = ($this->now)();
+        ($this->setTransient)(
+            $this->refreshKey(),
+            $this->lastRefreshAt,
+            max(1, $this->minimumRefreshIntervalSeconds)
+        );
+    }
+
+    private function refreshKey(): string
+    {
+        return $this->cacheKey . '_refresh_lock';
+    }
+
+    private function withRefreshLock(callable $callback): void
+    {
+        if (!isset($GLOBALS['wpdb'])
+            || !is_object($GLOBALS['wpdb'])
+            || !method_exists($GLOBALS['wpdb'], 'prepare')
+            || !method_exists($GLOBALS['wpdb'], 'get_var')
+        ) {
+            $callback();
+            return;
+        }
+
+        $wpdb = $GLOBALS['wpdb'];
+        $lockName = 'better_route_jwks_' . sha1($this->cacheKey);
+        $acquired = $wpdb->get_var($wpdb->prepare('SELECT GET_LOCK(%s, %d)', $lockName, 2));
+        if ((int) $acquired !== 1) {
+            return;
+        }
+
+        try {
+            $callback();
+        } finally {
+            $wpdb->get_var($wpdb->prepare('SELECT RELEASE_LOCK(%s)', $lockName));
+        }
     }
 }

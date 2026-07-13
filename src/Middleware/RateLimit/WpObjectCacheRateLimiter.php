@@ -24,11 +24,22 @@ final class WpObjectCacheRateLimiter implements RateLimiterInterface
             }
         }
 
+        if (function_exists('wp_using_ext_object_cache') && !wp_using_ext_object_cache()) {
+            throw new RuntimeException('A persistent external object cache is required for rate limiting.');
+        }
+        if (!function_exists('wp_cache_incr')) {
+            throw new RuntimeException('wp_cache_incr is required for atomic rate limiting.');
+        }
+
         $this->now = $now ?? static fn (): int => time();
     }
 
     public function hit(string $key, int $limit, int $windowSeconds): RateLimitResult
     {
+        if ($limit < 1 || $windowSeconds < 1) {
+            throw new \InvalidArgumentException('Rate limit and window must be greater than 0.');
+        }
+
         $now = ($this->now)();
         $ttl = max(1, $windowSeconds);
         $countKey = $this->storageKey($key, 'count');
@@ -44,20 +55,19 @@ final class WpObjectCacheRateLimiter implements RateLimiterInterface
         if (is_int($storedResetAt) && $storedResetAt > $now) {
             $resetAt = $storedResetAt;
         } else {
-            wp_cache_set($countKey, 1, $this->group, $ttl);
-            wp_cache_set($resetKey, $resetAt, $this->group, $ttl);
-            return new RateLimitResult(true, max($limit - 1, 0), $resetAt);
-        }
-
-        $count = false;
-        if (function_exists('wp_cache_incr')) {
+            // The reset key may have been evicted independently. Never reset an
+            // existing counter to 1, because that creates a rate-limit bypass.
             $count = wp_cache_incr($countKey, 1, $this->group);
+            if (!is_int($count)) {
+                throw new RuntimeException('Persistent object cache does not support atomic increment.');
+            }
+            wp_cache_set($resetKey, $resetAt, $this->group, $ttl);
+            return new RateLimitResult($count <= $limit, max($limit - $count, 0), $resetAt);
         }
 
+        $count = wp_cache_incr($countKey, 1, $this->group);
         if (!is_int($count)) {
-            $storedCount = wp_cache_get($countKey, $this->group);
-            $count = is_int($storedCount) ? $storedCount + 1 : 1;
-            wp_cache_set($countKey, $count, $this->group, max($resetAt - $now, 1));
+            throw new RuntimeException('Persistent object cache does not support atomic increment.');
         }
 
         return new RateLimitResult(

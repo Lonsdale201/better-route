@@ -5,6 +5,7 @@ declare(strict_types=1);
 namespace BetterRoute\Integration\Woo;
 
 use BetterRoute\Http\ApiException;
+use BetterRoute\Support\RestRequestParameters;
 
 final class ProductListQueryParser
 {
@@ -93,7 +94,9 @@ final class ProductListQueryParser
      */
     private function assertUnknownParams(array $params): void
     {
-        $allowed = ['fields', 'status', 'type', 'sku', 'search', 'stock_status', 'sort', 'page', 'per_page'];
+        $allowed = RestRequestParameters::allowedWithGlobals([
+            'fields', 'status', 'type', 'sku', 'search', 'stock_status', 'sort', 'page', 'per_page',
+        ]);
         $unknown = array_values(array_filter(
             array_keys($params),
             static fn (string $key): bool => !in_array($key, $allowed, true)

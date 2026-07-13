@@ -116,8 +116,7 @@ final class WooCustomerService
         $args = [
             'number' => $query->perPage,
             'paged' => $query->page,
-            'orderby' => $this->mapSortField($query->sortField),
-            'order' => $query->sortDirection,
+            'orderby' => $this->stableSort($query->sortField, $query->sortDirection),
         ];
 
         if ($query->role !== []) {
@@ -230,6 +229,7 @@ final class WooCustomerService
     private function persistCustomer(object $customer, array $payload, bool $isCreate): void
     {
         try {
+            $this->validatePayload($payload, $isCreate);
             $this->applyPayload($customer, $payload, $isCreate);
             if (method_exists($customer, 'save')) {
                 $customer->save();
@@ -241,6 +241,30 @@ final class WooCustomerService
                 400,
                 $code !== '' ? $code : 'validation_failed'
             );
+        }
+    }
+
+    /** @param array<string, mixed> $payload */
+    private function validatePayload(array $payload, bool $isCreate): void
+    {
+        foreach (['email', 'first_name', 'last_name', 'username', 'password'] as $field) {
+            if (array_key_exists($field, $payload) && !is_string($payload[$field])) {
+                throw $this->validationError([$field => ['must be a string']]);
+            }
+        }
+
+        if (!$isCreate && array_key_exists('username', $payload)) {
+            throw $this->validationError(['username' => ['changing username is not supported']]);
+        }
+
+        foreach (['billing', 'shipping'] as $field) {
+            if (array_key_exists($field, $payload)) {
+                $this->validateAddress($payload[$field], $field);
+            }
+        }
+
+        if (array_key_exists('meta_data', $payload)) {
+            MetaDataHelper::normalizeIncoming($payload['meta_data']);
         }
     }
 
@@ -319,7 +343,7 @@ final class WooCustomerService
             $customer->set_last_name((string) $payload['last_name']);
         }
 
-        if (array_key_exists('username', $payload) && $isCreate && method_exists($customer, 'set_username')) {
+        if (array_key_exists('username', $payload) && method_exists($customer, 'set_username')) {
             $customer->set_username((string) $payload['username']);
         }
 
@@ -364,23 +388,51 @@ final class WooCustomerService
 
     private function applyAddress(object $customer, mixed $value, string $type): void
     {
+        $this->validateAddress($value, $type);
+        /** @var array<string, string> $address */
+        $address = $value;
+
+        foreach ($this->addressFields() as $field) {
+            if (array_key_exists($field, $address)) {
+                $setter = "set_{$type}_{$field}";
+                if (method_exists($customer, $setter)) {
+                    $customer->$setter($address[$field]);
+                }
+            }
+        }
+    }
+
+    private function validateAddress(mixed $value, string $type): void
+    {
         if (!is_array($value)) {
             throw $this->validationError([$type => ['must be an object']]);
         }
 
-        $fields = [
+        $fields = $this->addressFields();
+
+        $unknown = array_values(array_diff(array_keys($value), $fields));
+        if ($unknown !== []) {
+            $errors = [];
+            foreach ($unknown as $field) {
+                $errors[$type . '.' . $field] = ['field not allowed'];
+            }
+            throw $this->validationError($errors);
+        }
+
+        foreach ($value as $field => $fieldValue) {
+            if (!is_string($fieldValue)) {
+                throw $this->validationError([$type . '.' . $field => ['must be a string']]);
+            }
+        }
+    }
+
+    /** @return list<string> */
+    private function addressFields(): array
+    {
+        return [
             'first_name', 'last_name', 'company', 'address_1', 'address_2',
             'city', 'state', 'postcode', 'country', 'email', 'phone',
         ];
-
-        foreach ($fields as $field) {
-            if (array_key_exists($field, $value)) {
-                $setter = "set_{$type}_{$field}";
-                if (method_exists($customer, $setter)) {
-                    $customer->$setter((string) $value[$field]);
-                }
-            }
-        }
     }
 
     private function getAvatarUrl(object $customer): string
@@ -488,6 +540,19 @@ final class WooCustomerService
             'display_name' => 'display_name',
             default => 'registered',
         };
+    }
+
+    /** @return array<string, string> */
+    private function stableSort(string $field, string $direction): array
+    {
+        $mapped = $this->mapSortField($field);
+        $order = strtoupper($direction) === 'ASC' ? 'ASC' : 'DESC';
+        $sort = [$mapped => $order];
+        if ($mapped !== 'ID') {
+            $sort['ID'] = $order;
+        }
+
+        return $sort;
     }
 
     private function dateToAtom(mixed $value): ?string

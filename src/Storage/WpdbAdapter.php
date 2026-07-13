@@ -40,9 +40,8 @@ final class WpdbAdapter
             $this->assertIdentifier((string) $filterField, 'filter field');
         }
 
-        if ($sortField !== null) {
-            $this->assertIdentifier($sortField, 'sort field');
-        }
+        $effectiveSortField = $sortField ?? $primaryKey;
+        $this->assertIdentifier($effectiveSortField, 'sort field');
 
         $select = implode(', ', array_map(fn (string $field): string => $this->quoteIdentifier($field), $fields));
 
@@ -65,11 +64,12 @@ final class WpdbAdapter
             }
         }
 
-        $orderBySql = '';
-        if ($sortField !== null) {
-            $direction = strtoupper($sortDirection) === 'DESC' ? 'DESC' : 'ASC';
-            $orderBySql = sprintf(' ORDER BY %s %s', $this->quoteIdentifier($sortField), $direction);
+        $direction = strtoupper($sortDirection) === 'DESC' ? 'DESC' : 'ASC';
+        $orderBy = [sprintf('%s %s', $this->quoteIdentifier($effectiveSortField), $direction)];
+        if ($effectiveSortField !== $primaryKey) {
+            $orderBy[] = sprintf('%s %s', $this->quoteIdentifier($primaryKey), $direction);
         }
+        $orderBySql = ' ORDER BY ' . implode(', ', $orderBy);
 
         $offset = ($page - 1) * $perPage;
         $itemsSql = sprintf(
@@ -151,8 +151,12 @@ final class WpdbAdapter
         $bindings = [];
         foreach ($payload as $column => $value) {
             $columns[] = $this->quoteIdentifier($column);
-            $placeholders[] = $this->placeholderFor($value);
-            $bindings[] = $value;
+            if ($value === null) {
+                $placeholders[] = 'NULL';
+            } else {
+                $placeholders[] = $this->placeholderFor($value);
+                $bindings[] = $value;
+            }
         }
 
         $sql = sprintf(
@@ -162,7 +166,7 @@ final class WpdbAdapter
             implode(', ', $placeholders)
         );
 
-        $prepared = $wpdb->prepare($sql, ...$bindings);
+        $prepared = $bindings !== [] ? $wpdb->prepare($sql, ...$bindings) : $sql;
         $this->executeWriteQuery($raw, $prepared);
 
         $id = $this->lastInsertId($raw);
@@ -200,8 +204,12 @@ final class WpdbAdapter
         $sets = [];
         $bindings = [];
         foreach ($payload as $column => $value) {
-            $sets[] = sprintf('%s = %s', $this->quoteIdentifier($column), $this->placeholderFor($value));
-            $bindings[] = $value;
+            if ($value === null) {
+                $sets[] = sprintf('%s = NULL', $this->quoteIdentifier($column));
+            } else {
+                $sets[] = sprintf('%s = %s', $this->quoteIdentifier($column), $this->placeholderFor($value));
+                $bindings[] = $value;
+            }
         }
         $bindings[] = $id;
 

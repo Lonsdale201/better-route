@@ -20,6 +20,12 @@ final class WordPressRestDispatcher implements DispatcherInterface
             );
         }
 
+        if (function_exists('did_action') && did_action('rest_api_init') < 1) {
+            throw new RuntimeException(
+                'Routes must be registered during rest_api_init. Wrap Router::register() in an add_action callback.'
+            );
+        }
+
         $definition = [
             'methods' => $route->method,
             'callback' => $callback,
@@ -31,6 +37,13 @@ final class WordPressRestDispatcher implements DispatcherInterface
             $definition['args'] = $route->args;
         }
 
-        register_rest_route($namespace, $route->uri, $definition);
+        $registered = register_rest_route($namespace, $route->uri, $definition);
+        if ($registered === false) {
+            throw new RuntimeException(sprintf(
+                'WordPress rejected REST route registration for %s%s.',
+                trim($namespace, '/'),
+                $route->uri
+            ));
+        }
     }
 }

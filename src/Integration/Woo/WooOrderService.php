@@ -5,6 +5,8 @@ declare(strict_types=1);
 namespace BetterRoute\Integration\Woo;
 
 use BetterRoute\Http\ApiException;
+use RuntimeException;
+use Throwable;
 
 final class WooOrderService
 {
@@ -118,7 +120,7 @@ final class WooOrderService
             'limit' => $query->perPage,
             'page' => $query->page,
             'return' => 'objects',
-            'orderby' => $this->mapSortField($query->sortField),
+            'orderby' => $this->stableSort($query->sortField),
             'order' => $query->sortDirection,
         ];
 
@@ -188,19 +190,22 @@ final class WooOrderService
     public function create(array $payload, array $fields): array
     {
         $this->assertWooFunctions();
-
         $this->assertPayloadKeys($payload);
+        $this->validatePayload($payload, true, null);
 
-        $order = wc_create_order();
-        if ($this->isWpError($order)) {
-            throw new ApiException((string) $order->get_error_message(), 400, 'woo_order_create_failed');
-        }
+        $order = $this->transactional(function () use ($payload): object {
+            $order = wc_create_order();
+            if ($this->isWpError($order)) {
+                throw new ApiException((string) $order->get_error_message(), 400, 'woo_order_create_failed');
+            }
 
-        if (!is_object($order)) {
-            throw new ApiException('Order creation failed.', 500, 'woo_order_create_failed');
-        }
+            if (!is_object($order)) {
+                throw new ApiException('Order creation failed.', 500, 'woo_order_create_failed');
+            }
 
-        $this->persistPayload($order, $payload, true);
+            $this->persistPayload($order, $payload, true);
+            return $order;
+        });
 
         return $this->mapOrder($order, $fields);
     }
@@ -220,7 +225,10 @@ final class WooOrderService
         }
 
         $this->assertPayloadKeys($payload);
-        $this->persistPayload($order, $payload, false);
+        $this->validatePayload($payload, false, $order);
+        $this->transactional(function () use ($order, $payload): void {
+            $this->persistPayload($order, $payload, false);
+        });
 
         return $this->mapOrder($order, $fields);
     }
@@ -244,6 +252,29 @@ final class WooOrderService
                 400,
                 $code !== '' ? $code : 'validation_failed'
             );
+        }
+    }
+
+    /**
+     * @template T
+     * @param callable(): T $operation
+     * @return T
+     */
+    private function transactional(callable $operation): mixed
+    {
+        if (!function_exists('wc_transaction_query')) {
+            throw new RuntimeException('WooCommerce transaction API is unavailable.');
+        }
+
+        wc_transaction_query('start');
+
+        try {
+            $result = $operation();
+            wc_transaction_query('commit');
+            return $result;
+        } catch (Throwable $throwable) {
+            wc_transaction_query('rollback');
+            throw $throwable;
         }
     }
 
@@ -403,10 +434,22 @@ final class WooOrderService
             'phone',
         ];
 
+        $unknown = array_values(array_diff(array_keys($value), $allowed));
+        if ($unknown !== []) {
+            $errors = [];
+            foreach ($unknown as $key) {
+                $errors[$field . '.' . $key] = ['field not allowed'];
+            }
+            throw $this->validationError($errors);
+        }
+
         $result = [];
         foreach ($allowed as $key) {
             if (array_key_exists($key, $value)) {
-                $result[$key] = (string) $value[$key];
+                if (!is_string($value[$key])) {
+                    throw $this->validationError([$field . '.' . $key => ['must be a string']]);
+                }
+                $result[$key] = $value[$key];
             }
         }
 
@@ -505,11 +548,17 @@ final class WooOrderService
             }
 
             if (isset($itemData['subtotal']) && is_numeric($itemData['subtotal']) && method_exists($item, 'set_subtotal')) {
-                $item->set_subtotal((float) $itemData['subtotal']);
+                $item->set_subtotal($this->nonNegativeNumber(
+                    $itemData['subtotal'],
+                    'line_items.' . $index . '.subtotal'
+                ));
             }
 
             if (isset($itemData['total']) && is_numeric($itemData['total']) && method_exists($item, 'set_total')) {
-                $item->set_total((float) $itemData['total']);
+                $item->set_total($this->nonNegativeNumber(
+                    $itemData['total'],
+                    'line_items.' . $index . '.total'
+                ));
             }
 
             if (array_key_exists('meta_data', $itemData)) {
@@ -521,6 +570,158 @@ final class WooOrderService
                 $item->save();
             }
         }
+    }
+
+    /**
+     * @param array<string, mixed> $payload
+     */
+    private function validatePayload(array $payload, bool $isCreate, ?object $order): void
+    {
+        foreach (['status', 'currency', 'payment_method', 'payment_method_title', 'customer_note'] as $field) {
+            if (array_key_exists($field, $payload) && !is_string($payload[$field])) {
+                throw $this->validationError([$field => ['must be a string']]);
+            }
+        }
+
+        if (array_key_exists('customer_id', $payload)) {
+            $customerId = $this->nonNegativeInt($payload['customer_id'], 'customer_id');
+            if ($customerId > 0 && function_exists('get_userdata') && get_userdata($customerId) === false) {
+                throw $this->validationError(['customer_id' => ['customer not found']]);
+            }
+        }
+
+        foreach (['billing', 'shipping'] as $addressField) {
+            if (array_key_exists($addressField, $payload)) {
+                $this->normalizeAddress($payload[$addressField], $addressField);
+            }
+        }
+
+        if (array_key_exists('meta_data', $payload)) {
+            MetaDataHelper::normalizeIncoming($payload['meta_data']);
+        }
+
+        if (array_key_exists('set_paid', $payload) && !is_bool($payload['set_paid'])) {
+            throw $this->validationError(['set_paid' => ['must be boolean']]);
+        }
+
+        if (array_key_exists('line_items', $payload)) {
+            if (!$isCreate && $order !== null && $this->orderStockWasReduced($order)) {
+                throw new ApiException(
+                    'Line items cannot be modified on an order that has already reduced stock.',
+                    409,
+                    'woo_line_items_locked'
+                );
+            }
+
+            $this->validateLineItems($payload['line_items']);
+        }
+    }
+
+    private function validateLineItems(mixed $value): void
+    {
+        if (!is_array($value)) {
+            throw $this->validationError(['line_items' => ['must be an array']]);
+        }
+
+        $allowedKeys = ['product_id', 'variation_id', 'quantity', 'subtotal', 'total', 'meta_data'];
+
+        foreach ($value as $index => $itemData) {
+            $prefix = 'line_items.' . $index;
+            if (!is_array($itemData) || array_is_list($itemData)) {
+                throw $this->validationError([$prefix => ['must be an object']]);
+            }
+
+            $unknown = array_values(array_diff(array_keys($itemData), $allowedKeys));
+            if ($unknown !== []) {
+                $errors = [];
+                foreach ($unknown as $field) {
+                    $errors[$prefix . '.' . $field] = ['field not allowed'];
+                }
+                throw $this->validationError($errors);
+            }
+
+            $productId = $this->positiveInt($itemData['product_id'] ?? null, $prefix . '.product_id');
+            $product = wc_get_product($productId);
+            if (!is_object($product)) {
+                throw $this->validationError([$prefix . '.product_id' => ['product not found']]);
+            }
+
+            if (array_key_exists('quantity', $itemData)) {
+                $this->positiveInt($itemData['quantity'], $prefix . '.quantity');
+            }
+
+            if (array_key_exists('variation_id', $itemData)) {
+                $variationId = $this->nonNegativeInt($itemData['variation_id'], $prefix . '.variation_id');
+                if ($variationId > 0) {
+                    $variation = wc_get_product($variationId);
+                    if (
+                        !is_object($variation)
+                        || !method_exists($variation, 'get_parent_id')
+                        || (int) $variation->get_parent_id() !== $productId
+                    ) {
+                        throw $this->validationError([
+                            $prefix . '.variation_id' => ['must be a variation of the given product'],
+                        ]);
+                    }
+                }
+            }
+
+            foreach (['subtotal', 'total'] as $amountField) {
+                if (array_key_exists($amountField, $itemData)) {
+                    $this->nonNegativeNumber($itemData[$amountField], $prefix . '.' . $amountField);
+                }
+            }
+
+            if (array_key_exists('meta_data', $itemData)) {
+                MetaDataHelper::normalizeIncoming($itemData['meta_data'], $prefix . '.meta_data');
+            }
+        }
+    }
+
+    private function positiveInt(mixed $value, string $field): int
+    {
+        $integer = $this->integer($value, $field);
+        if ($integer < 1) {
+            throw $this->validationError([$field => ['must be a positive integer']]);
+        }
+
+        return $integer;
+    }
+
+    private function nonNegativeInt(mixed $value, string $field): int
+    {
+        $integer = $this->integer($value, $field);
+        if ($integer < 0) {
+            throw $this->validationError([$field => ['must be greater than or equal to 0']]);
+        }
+
+        return $integer;
+    }
+
+    private function integer(mixed $value, string $field): int
+    {
+        if (is_int($value)) {
+            return $value;
+        }
+
+        if (is_string($value) && preg_match('/^\d+$/', $value) === 1) {
+            return (int) $value;
+        }
+
+        throw $this->validationError([$field => ['must be an integer']]);
+    }
+
+    private function nonNegativeNumber(mixed $value, string $field): string
+    {
+        if ((!is_int($value) && !is_float($value) && !is_string($value))
+            || !is_numeric($value)
+            || !is_finite((float) $value)
+            || (float) $value < 0
+        ) {
+            throw $this->validationError([$field => ['must be a non-negative number']]);
+        }
+
+        return (string) $value;
     }
 
     private function orderStockWasReduced(object $order): bool
@@ -580,6 +781,12 @@ final class WooOrderService
             'total' => 'total',
             default => 'date',
         };
+    }
+
+    private function stableSort(string $field): string
+    {
+        $mapped = $this->mapSortField($field);
+        return $mapped === 'ID' ? $mapped : $mapped . ' ID';
     }
 
     private function dateToAtom(mixed $value): ?string

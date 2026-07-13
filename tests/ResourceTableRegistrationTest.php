@@ -107,7 +107,9 @@ final class ResourceTableRegistrationTest extends TestCase
             ->allow(['list'])
             ->fields(['id'])
             ->defaultPerPage(50)
-            ->maxPerPage(10);
+            ->maxPerPage(10)
+            ->usingTableRepository(new ArrayTableRepository())
+            ->register(new TableResourceDispatcher());
     }
 
     public function testReturnsValidationErrorForUnknownQueryParams(): void

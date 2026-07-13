@@ -17,11 +17,18 @@ final class OAuthErrorNormalizer
             ? $throwable->errorCode()
             : ($status === 400 ? 'invalid_request' : 'server_error');
         $details = $throwable instanceof ApiException ? $throwable->details() : [];
-        $message = $throwable instanceof ApiException || $status === 400
+        $message = $throwable instanceof ApiException
             ? ($throwable->getMessage() !== '' ? $throwable->getMessage() : 'Invalid request.')
-            : 'Unexpected error.';
+            : ($status === 400 ? 'Invalid request.' : 'Unexpected error.');
 
-        return $this->response($code, $message, $status, $requestId, $details);
+        return $this->response(
+            $code,
+            $message,
+            $status,
+            $requestId,
+            $details,
+            $throwable instanceof ApiException ? $throwable->headers() : []
+        );
     }
 
     public function fromWpError(object $wpError, string $requestId): Response
@@ -42,8 +49,13 @@ final class OAuthErrorNormalizer
             if (isset($data['status']) && is_int($data['status'])) {
                 $status = $data['status'];
             }
-            $details = $data;
-            unset($details['status']);
+            if (is_array($data['params'] ?? null)) {
+                $details['params'] = $data['params'];
+            }
+        }
+
+        if ($status < 400 || $status > 599) {
+            $status = 400;
         }
 
         return $this->response(
@@ -51,15 +63,23 @@ final class OAuthErrorNormalizer
             $message !== '' ? $message : 'Invalid request.',
             $status,
             $requestId,
-            $details
+            $details,
+            []
         );
     }
 
     /**
      * @param array<string, mixed> $details
+     * @param array<string, string> $headers
      */
-    private function response(string $code, string $message, int $status, string $requestId, array $details): Response
-    {
+    private function response(
+        string $code,
+        string $message,
+        int $status,
+        string $requestId,
+        array $details,
+        array $headers
+    ): Response {
         $body = [
             'error' => $this->normalizeCode($code, $status),
             'error_description' => $message,
@@ -74,7 +94,7 @@ final class OAuthErrorNormalizer
             $body['request_id'] = $requestId;
         }
 
-        return new Response($body, $status);
+        return new Response($body, $status, $headers);
     }
 
     private function normalizeCode(string $code, int $status): string

@@ -34,7 +34,8 @@ final class ErrorNormalizer
                     'details' => $details,
                 ],
             ],
-            status: $status
+            status: $status,
+            headers: $throwable instanceof ApiException ? $throwable->headers() : []
         );
     }
 
@@ -57,8 +58,15 @@ final class ErrorNormalizer
             if (isset($data['status']) && is_int($data['status'])) {
                 $status = $data['status'];
             }
-            $details = $data;
-            unset($details['status']);
+            // WP_Error data is arbitrary and may contain SQL/debug context.
+            // Only the core REST validation map is intentionally client-safe.
+            if (is_array($data['params'] ?? null)) {
+                $details['params'] = $data['params'];
+            }
+        }
+
+        if ($status < 400 || $status > 599) {
+            $status = 500;
         }
 
         return new Response(
