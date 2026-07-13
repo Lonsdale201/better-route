@@ -165,4 +165,51 @@ final class OpenApiExporterTest extends TestCase
         self::assertSame([['bearerAuth' => []]], $document['security']);
         self::assertSame([], $document['paths']['/better-route/v1/public/ping']['get']['security']);
     }
+
+    public function testExportsRouteArgsAndLetsExplicitParametersOverrideThem(): void
+    {
+        $document = (new OpenApiExporter())->export([[
+            'namespace' => 'better-route/v1',
+            'method' => 'GET',
+            'path' => '/articles/(?P<id>\d+)',
+            'args' => [
+                'id' => ['required' => true, 'type' => 'integer'],
+                'page' => ['type' => 'integer', 'minimum' => 1, 'default' => 1],
+            ],
+            'meta' => [
+                'parameters' => [
+                    ['in' => 'query', 'name' => 'page', 'schema' => ['type' => 'integer', 'maximum' => 50]],
+                ],
+            ],
+        ]]);
+
+        $parameters = $document['paths']['/better-route/v1/articles/{id}']['get']['parameters'];
+        self::assertCount(2, $parameters);
+        self::assertSame('integer', $parameters[0]['schema']['type']);
+        self::assertSame(50, $parameters[1]['schema']['maximum']);
+        self::assertArrayNotHasKey('minimum', $parameters[1]['schema']);
+    }
+
+    public function testCustomResponseOverridesDefaultAndOptionsUses204(): void
+    {
+        $document = (new OpenApiExporter())->export([
+            [
+                'namespace' => 'better-route/v1',
+                'method' => 'POST',
+                'path' => '/articles',
+                'args' => [],
+                'meta' => ['responses' => ['201' => ['description' => 'Created explicitly']]],
+            ],
+            [
+                'namespace' => 'better-route/v1',
+                'method' => 'OPTIONS',
+                'path' => '/articles',
+                'args' => [],
+                'meta' => ['responseSchema' => '#/components/schemas/Article'],
+            ],
+        ]);
+
+        self::assertSame('Created explicitly', $document['paths']['/better-route/v1/articles']['post']['responses']['201']['description']);
+        self::assertArrayNotHasKey('content', $document['paths']['/better-route/v1/articles']['options']['responses']['204']);
+    }
 }

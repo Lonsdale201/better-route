@@ -12,7 +12,7 @@ Supports PHP 8.1+ and is tested against WordPress 6.9 stubs. WooCommerce support
 
 - Fluent REST router on top of `register_rest_route()`
 - Middleware pipeline (`global -> group -> route`)
-- Explicit `OPTIONS` route support for preflight endpoints
+- Explicit `OPTIONS` route support and a WordPress CORS bridge for preflight endpoints
 - Resource DSL for:
   - CPT-backed endpoints
   - custom table-backed endpoints
@@ -45,7 +45,7 @@ Supports PHP 8.1+ and is tested against WordPress 6.9 stubs. WooCommerce support
 Published on [Packagist](https://packagist.org/packages/better-route/better-route) — install with Composer:
 
 ```bash
-composer require better-route/better-route:^1.0
+composer require better-route/better-route:^1.1
 ```
 
 Only add a VCS repository (pointing at this GitHub repo) if you need to track an unreleased branch or a fork. For local development you can still use a path repository + symlink.
@@ -56,15 +56,18 @@ Only add a VCS repository (pointing at this GitHub repo) if you need to track an
 use BetterRoute\Router\Router;
 
 add_action('rest_api_init', function () {
-    Router::make('better-route', 'v1')
+    $router = Router::make('better-route', 'v1');
+    $router
         ->get('/ping', fn () => ['pong' => true])
+        ->publicRoute()
         ->meta(['operationId' => 'ping', 'tags' => ['System']]);
+
+    $router->register();
 });
 ```
 
-`GET` routes are public by default. Write routes (`POST`, `PUT`, `PATCH`, `DELETE`)
-deny by default unless you explicitly call `->permission(...)`,
-`->protectedByMiddleware()`, or `->publicRoute()`.
+Every raw Router route, including `GET` and `OPTIONS`, denies by default. Explicitly
+call `->permission(...)`, `->protectedByMiddleware()`, or `->publicRoute()`.
 
 WordPress validates and sanitizes registered REST `args` before
 `permission_callback` runs. Keep `->args()` callbacks cheap and side-effect free.
@@ -99,6 +102,7 @@ add_action('rest_api_init', function () {
         $r->middleware([JwtAuthMiddleware::class]);
 
         $r->get('/me', fn () => ['ok' => true])
+            ->protectedByMiddleware('bearerAuth')
             ->meta(['operationId' => 'secureMe', 'tags' => ['Auth']]);
 
         $r->post('/articles', fn () => ['created' => true])
@@ -156,6 +160,11 @@ add_action('rest_api_init', function () {
         ->register();
 });
 ```
+
+An arbitrary `cptVisibilityPolicy()` callback is evaluated item by item. To keep
+`total` and pagination truthful, the Resource layer scans all matching repository
+pages before slicing the visible result. For large datasets, express visibility as
+a query-level CPT filter/repository condition instead of a per-item callback.
 
 ### Custom Table Resource
 
@@ -215,13 +224,31 @@ add_action('rest_api_init', function () {
 - `BetterRoute\Middleware\Write\WpdbSingleUseTokenStore`
 - `BetterRoute\Middleware\Write\WpCacheSingleUseTokenStore`
 - `BetterRoute\Middleware\Write\OptimisticLockMiddleware`
+- `BetterRoute\Middleware\Write\WpdbOptimisticLockCriticalSection`
 - `BetterRoute\Http\ConflictException` (`409`)
 - `BetterRoute\Http\PreconditionFailedException` (`412`)
+- `BetterRoute\Http\PreconditionRequiredException` (`428`)
+
+`AtomicIdempotencyMiddleware` keeps a failed reservation until its TTL expires by
+default, preventing an uncertain side effect from being executed again. The wpdb
+store uses a per-reservation lease token, creates/migrates its table through
+`installSchema()`, and never deserializes arbitrary classes. `ArrayAtomicIdempotencyStore`
+is for tests only.
+
+The default optimistic-lock critical section serializes Better Route writes with
+a MySQL advisory lock. Writers outside this protocol can still race; use the same
+lock or enforce the version in a storage-level conditional `UPDATE` when external
+writers modify the same record.
 
 ### Public-client API hardening
 
 - `BetterRoute\Middleware\Cors\CorsMiddleware`
 - `BetterRoute\Middleware\Cors\CorsPolicy`
+
+Attach CORS middleware before `Router::register()`. The WordPress bridge handles
+preflight before the route callback and replaces WordPress core CORS headers for
+matched routes, so the configured allowlist remains authoritative. Origins,
+methods, and header names are validated against response-header injection.
 
 ### Cache / conditional reads
 
@@ -237,6 +264,10 @@ add_action('rest_api_init', function () {
 - `BetterRoute\Middleware\Network\TrustedProxyClientIpResolver`
 - `BetterRoute\Middleware\Network\IpAllowlistMiddleware`
 
+`WpObjectCacheRateLimiter` requires a persistent external object cache with atomic
+`wp_cache_incr()`. `TransientRateLimiter` uses a MySQL advisory lock in its default
+WordPress configuration. Neither silently falls back to a racy read/modify/write.
+
 ### Support
 
 - `BetterRoute\Support\Crypto`
@@ -250,6 +281,10 @@ add_action('rest_api_init', function () {
 - `BetterRoute\Middleware\Observability\MetricsMiddleware`
 - `BetterRoute\Observability\AuditEventFactory`
 - `BetterRoute\Observability\PrometheusMetricSink`
+
+`PrometheusMetricSink` and `InMemoryMetricSink` are process/request-local collectors;
+export or replace them with a persistent backend for cross-request totals. Audit and
+metric sink failures are best-effort and never change the API response.
 
 ## OpenAPI (MVP)
 
@@ -269,7 +304,7 @@ $contracts = array_merge(
 
 $openApi = (new OpenApiExporter())->export($contracts, [
     'title' => 'better-route API',
-    'version' => 'v0.5.0',
+    'version' => 'v1.1.0',
     'serverUrl' => '/wp-json',
     'strictSchemas' => true,
     'components' => array_replace_recursive(
@@ -304,6 +339,7 @@ Per-route overrides live in route `meta`:
 
 ```php
 $router->get('/public/ping', fn () => ['pong' => true])
+    ->publicRoute()
     ->meta([
         'operationId' => 'publicPing',
         'security' => [],            // explicit no-auth (overrides globalSecurity)
@@ -330,7 +366,7 @@ OpenApiRouteRegistrar::register(
     ]),
     options: [
         'title' => 'better-route API',
-        'version' => 'v0.5.0',
+        'version' => 'v1.1.0',
         'serverUrl' => '/wp-json',
         // Defaults to manage_options when omitted.
         'permissionCallback' => static fn (): bool => current_user_can('manage_options'),
@@ -339,6 +375,12 @@ OpenApiRouteRegistrar::register(
 ```
 
 Result endpoint: `GET /wp-json/better-route/v1/openapi.json`
+
+Executable route `args` are exported automatically as path/query parameters;
+explicit `meta.parameters` entries override derived entries with the same name and
+location. Resource create/update responses are `{ "data": ... }` envelopes, so
+strict component sets should provide `<Resource>Response` in addition to
+`<Resource>`, `<Resource>Input`, and `<Resource>ListResponse`.
 
 ## WooCommerce HPOS Integration (Optional)
 
@@ -388,6 +430,7 @@ add_action('rest_api_init', function () {
         // Omit a key to get the full `['list', 'get', 'create', 'update', 'delete']` set.
         'actions' => [
             'customers' => ['list', 'get'], // read-only customers, full CRUD elsewhere
+            'coupons' => [], // explicitly expose no coupon routes
         ],
     ]);
 
@@ -408,6 +451,13 @@ When idempotency is enabled, write routes document and accept `Idempotency-Key` 
 
 - `409` for `idempotency_conflict`
 - `400` for `idempotency_key_required` (if `requireKey=true`)
+
+Without an explicit store the Woo registrar installs and uses the lease-aware wpdb
+atomic store. A schema/install failure is reported instead of degrading to a
+request-local store. A versioned WordPress option prevents repeated DDL/schema
+checks after a successful install or migration. Product `price` is read-only;
+customer email and coupon code are required on create; nested order/customer
+fields reject unknown keys.
 
 ## Error Contract
 
@@ -436,9 +486,27 @@ composer cs-check
 
 ## Current Status
 
-Stable — 1.0.0. Available on Packagist: `composer require better-route/better-route:^1.0`.
+Stable — 1.1.0. Available on Packagist: `composer require better-route/better-route:^1.1`.
 
 ## Changelog
+
+### 1.1.0 — 2026-07-13
+
+Security, atomicity, REST compatibility, and deterministic behavior:
+
+- Raw Router routes now deny by default for every HTTP method; public and middleware-protected intent is explicit. Route groups unwind safely after exceptions, handler resolution supports static/union-typed callables, and WordPress registration fails clearly outside `rest_api_init` or when core rejects a route.
+- CPT reads fail closed on missing/private/password-protected visibility data. Custom visibility callbacks now produce correct visible totals/pages, while invariant WP query arguments cannot be overridden through filters.
+- Native WordPress user identity now scopes cache, idempotency, and rate-limit keys even without an auth middleware attribute. HMAC identities populate the shared auth context.
+- CORS is authoritative over WordPress core headers for matched routes, validates all configured header tokens/origins, and handles allowed/denied preflight before dispatch.
+- ETags preserve WordPress REST status/data/headers, support weak/list matching, and produce correct `304` responses. WordPress errors and non-2xx responses are never cached.
+- Rate limiting now requires atomic persistent-cache increments or uses a MySQL-locked transient update; `429` errors include `Retry-After` and rate-limit headers.
+- Atomic idempotency uses unforgeable reservation leases, bounded keys, deep canonical fingerprints, and data-only response serialization. Failed requests remain reserved by default. Woo write routes use the atomic store across orders, products, customers, and coupons.
+- Optimistic locking encloses version resolution and the write in a per-resource MySQL critical section for cooperating Better Route writers.
+- Woo order payloads are fully validated before persistence and order writes run in a Woo transaction. Product/customer/coupon validation is strict, coupon-code updates are uniqueness-locked, OpenAPI inputs match runtime behavior, empty action lists disable a resource, and list ordering has an ID tie-breaker.
+- OpenAPI derives path/query parameters from route args, permits explicit overrides, documents `OPTIONS` as `204`, and lets custom responses replace defaults.
+- JWT max-lifetime enforcement requires both `iat` and `exp`; unknown-key JWKS refreshes are throttled and preserve last-known-good keys on fetch failure.
+- SQL `NULL` writes are real SQL nulls, custom-table default ordering uses the primary key, response/error headers are validated, WP error details are allowlisted, and telemetry failures cannot mask application results.
+- Verified locally against PHP 8.3, WordPress 7.0.1, WooCommerce 10.9.4 with HPOS, PHPUnit, PHPStan, coding standards, and live REST/Woo smoke tests.
 
 ### 1.0.0 — 2026-07-12
 

@@ -6,7 +6,7 @@ namespace BetterRoute\Middleware\Write;
 
 use RuntimeException;
 
-final class WpdbAtomicIdempotencyStore implements AtomicIdempotencyStoreInterface
+final class WpdbAtomicIdempotencyStore implements LeaseAwareAtomicIdempotencyStoreInterface
 {
     public function __construct(
         private readonly string $table = 'better_route_atomic_idempotency',
@@ -17,11 +17,24 @@ final class WpdbAtomicIdempotencyStore implements AtomicIdempotencyStoreInterfac
 
     public function reserve(string $key, string $fingerprint, int $ttlSeconds): AtomicIdempotencyRecord
     {
+        for ($attempt = 0; $attempt < 3; $attempt++) {
+            $record = $this->reserveOnce($key, $fingerprint, $ttlSeconds);
+            if ($record !== null) {
+                return $record;
+            }
+        }
+
+        throw new RuntimeException('Unable to read the idempotency reservation after repeated attempts.');
+    }
+
+    private function reserveOnce(string $key, string $fingerprint, int $ttlSeconds): ?AtomicIdempotencyRecord
+    {
         $wpdb = $this->wpdb();
         $table = $this->tableName();
         $storageKey = $this->storageKey($key);
         $now = time();
         $expiresAt = $now + max(1, $ttlSeconds);
+        $reservationToken = $this->reservationToken();
 
         $wpdb->query($wpdb->prepare(
             sprintf('DELETE FROM %s WHERE idempotency_key = %%s AND expires_at <= %%d', $table),
@@ -31,11 +44,12 @@ final class WpdbAtomicIdempotencyStore implements AtomicIdempotencyStoreInterfac
 
         $inserted = $wpdb->query($wpdb->prepare(
             sprintf(
-                'INSERT IGNORE INTO %s (idempotency_key, fingerprint, status, response, expires_at, updated_at) VALUES (%%s, %%s, %%s, %%s, %%d, %%d)',
+                'INSERT IGNORE INTO %s (idempotency_key, fingerprint, reservation_token, status, response, expires_at, updated_at) VALUES (%%s, %%s, %%s, %%s, %%s, %%d, %%d)',
                 $table
             ),
             $storageKey,
             $fingerprint,
+            $reservationToken,
             'in_progress',
             '',
             $expiresAt,
@@ -47,19 +61,24 @@ final class WpdbAtomicIdempotencyStore implements AtomicIdempotencyStoreInterfac
         }
 
         if ((int) $inserted === 1) {
-            return new AtomicIdempotencyRecord(AtomicIdempotencyRecord::RESERVED, $fingerprint);
+            return new AtomicIdempotencyRecord(
+                AtomicIdempotencyRecord::RESERVED,
+                $fingerprint,
+                null,
+                $reservationToken
+            );
         }
 
         $row = $wpdb->get_row(
             $wpdb->prepare(
-                sprintf('SELECT fingerprint, status, response, expires_at FROM %s WHERE idempotency_key = %%s LIMIT 1', $table),
+                sprintf('SELECT fingerprint, reservation_token, status, response, expires_at FROM %s WHERE idempotency_key = %%s LIMIT 1', $table),
                 $storageKey
             ),
             defined('ARRAY_A') ? ARRAY_A : 'ARRAY_A'
         );
 
         if (!is_array($row)) {
-            return $this->reserve($key, $fingerprint, $ttlSeconds);
+            return null;
         }
 
         $storedFingerprint = is_string($row['fingerprint'] ?? null) ? $row['fingerprint'] : '';
@@ -81,34 +100,52 @@ final class WpdbAtomicIdempotencyStore implements AtomicIdempotencyStoreInterfac
 
     public function complete(string $key, string $fingerprint, mixed $response, int $ttlSeconds): void
     {
+        throw new RuntimeException('Use completeReservation() with the reservation token.');
+    }
+
+    public function completeReservation(
+        string $key,
+        string $fingerprint,
+        string $reservationToken,
+        mixed $response,
+        int $ttlSeconds
+    ): void {
         $wpdb = $this->wpdb();
         $table = $this->tableName();
         $result = $wpdb->query($wpdb->prepare(
             sprintf(
-                'UPDATE %s SET status = %%s, response = %%s, expires_at = %%d, updated_at = %%d WHERE idempotency_key = %%s AND fingerprint = %%s',
+                'UPDATE %s SET status = %%s, response = %%s, expires_at = %%d, updated_at = %%d WHERE idempotency_key = %%s AND fingerprint = %%s AND reservation_token = %%s AND status = %%s',
                 $table
             ),
             'complete',
-            serialize($response),
+            StoredResponseCodec::encode($response),
             time() + max(1, $ttlSeconds),
             time(),
             $this->storageKey($key),
-            $fingerprint
+            $fingerprint,
+            $reservationToken,
+            'in_progress'
         ));
 
-        if ($result === false) {
-            throw new RuntimeException('Unable to complete idempotency record.');
+        if ((int) $result !== 1) {
+            throw new RuntimeException('Idempotency reservation is no longer owned by this request.');
         }
     }
 
     public function release(string $key, string $fingerprint): void
     {
+        throw new RuntimeException('Use releaseReservation() with the reservation token.');
+    }
+
+    public function releaseReservation(string $key, string $fingerprint, string $reservationToken): void
+    {
         $wpdb = $this->wpdb();
         $table = $this->tableName();
         $wpdb->query($wpdb->prepare(
-            sprintf('DELETE FROM %s WHERE idempotency_key = %%s AND fingerprint = %%s AND status <> %%s', $table),
+            sprintf('DELETE FROM %s WHERE idempotency_key = %%s AND fingerprint = %%s AND reservation_token = %%s AND status <> %%s', $table),
             $this->storageKey($key),
             $fingerprint,
+            $reservationToken,
             'complete'
         ));
     }
@@ -121,6 +158,7 @@ final class WpdbAtomicIdempotencyStore implements AtomicIdempotencyStoreInterfac
             'CREATE TABLE IF NOT EXISTS %s (
                 idempotency_key varchar(64) NOT NULL,
                 fingerprint varchar(64) NOT NULL,
+                reservation_token varchar(64) NOT NULL,
                 status varchar(20) NOT NULL,
                 response longtext NOT NULL,
                 expires_at bigint unsigned NOT NULL,
@@ -138,6 +176,20 @@ final class WpdbAtomicIdempotencyStore implements AtomicIdempotencyStoreInterfac
         if ($result === false) {
             throw new RuntimeException('Unable to install atomic idempotency table.');
         }
+
+        $column = $wpdb->get_var(sprintf(
+            "SHOW COLUMNS FROM %s LIKE 'reservation_token'",
+            $this->tableName()
+        ));
+        if (!is_string($column) || $column === '') {
+            $altered = $wpdb->query(sprintf(
+                "ALTER TABLE %s ADD reservation_token varchar(64) NOT NULL DEFAULT '' AFTER fingerprint",
+                $this->tableName()
+            ));
+            if ($altered === false) {
+                throw new RuntimeException('Unable to migrate atomic idempotency table.');
+            }
+        }
     }
 
     private function decodeResponse(string $serialized): mixed
@@ -146,9 +198,12 @@ final class WpdbAtomicIdempotencyStore implements AtomicIdempotencyStoreInterfac
             return null;
         }
 
-        // Restrict object deserialization to the library's own response DTO so a
-        // tampered row cannot trigger PHP object injection via __wakeup/__destruct.
-        return unserialize($serialized, ['allowed_classes' => [\BetterRoute\Http\Response::class]]);
+        return StoredResponseCodec::decode($serialized);
+    }
+
+    private function reservationToken(): string
+    {
+        return bin2hex(random_bytes(16));
     }
 
     private function storageKey(string $key): string
@@ -191,6 +246,7 @@ final class WpdbAtomicIdempotencyStore implements AtomicIdempotencyStoreInterfac
             && is_object($GLOBALS['wpdb'])
             && method_exists($GLOBALS['wpdb'], 'prepare')
             && method_exists($GLOBALS['wpdb'], 'get_row')
+            && method_exists($GLOBALS['wpdb'], 'get_var')
             && method_exists($GLOBALS['wpdb'], 'query')
         ) {
             return $GLOBALS['wpdb'];

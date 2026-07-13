@@ -10,11 +10,17 @@ use BetterRoute\Http\RequestContext;
 use BetterRoute\Http\Response;
 use BetterRoute\Middleware\MiddlewareInterface;
 use BetterRoute\Middleware\Network\ClientIpResolverInterface;
+use BetterRoute\Support\Canonicalizer;
+use BetterRoute\Support\RequestIdentity;
+use InvalidArgumentException;
 
 final class RateLimitMiddleware implements MiddlewareInterface
 {
     /** @var callable(RequestContext): string */
     private $keyResolver;
+
+    /** @var callable(): int */
+    private $now;
 
     /**
      * @param null|callable(RequestContext): string $keyResolver
@@ -24,9 +30,21 @@ final class RateLimitMiddleware implements MiddlewareInterface
         private readonly int $limit = 60,
         private readonly int $windowSeconds = 60,
         ?callable $keyResolver = null,
-        private readonly ClientIpResolver|ClientIpResolverInterface|null $clientIpResolver = null
+        private readonly ClientIpResolver|ClientIpResolverInterface|null $clientIpResolver = null,
+        ?callable $now = null
     ) {
-        $this->keyResolver = $keyResolver ?? fn (RequestContext $context): string => $context->routePath . '|' . $this->identityKey($context);
+        if ($limit < 1) {
+            throw new InvalidArgumentException('Rate limit must be greater than 0.');
+        }
+        if ($windowSeconds < 1) {
+            throw new InvalidArgumentException('Rate-limit window must be greater than 0.');
+        }
+
+        $this->keyResolver = $keyResolver ?? fn (RequestContext $context): string => Canonicalizer::json([
+            'route' => $context->routePath,
+            'identity' => $this->identityKey($context),
+        ]);
+        $this->now = $now ?? static fn (): int => time();
     }
 
     public function handle(RequestContext $context, callable $next): mixed
@@ -35,6 +53,7 @@ final class RateLimitMiddleware implements MiddlewareInterface
         $result = $this->limiter->hit($key, $this->limit, $this->windowSeconds);
 
         if (!$result->allowed) {
+            $retryAfter = max(1, $result->resetAt - ($this->now)());
             throw new ApiException(
                 message: 'Rate limit exceeded.',
                 status: 429,
@@ -43,6 +62,12 @@ final class RateLimitMiddleware implements MiddlewareInterface
                     'limit' => $this->limit,
                     'remaining' => $result->remaining,
                     'resetAt' => $result->resetAt,
+                ],
+                headers: [
+                    'Retry-After' => (string) $retryAfter,
+                    'X-RateLimit-Limit' => (string) $this->limit,
+                    'X-RateLimit-Remaining' => (string) $result->remaining,
+                    'X-RateLimit-Reset' => (string) $result->resetAt,
                 ]
             );
         }
@@ -72,18 +97,9 @@ final class RateLimitMiddleware implements MiddlewareInterface
 
     private function identityKey(RequestContext $context): string
     {
-        $auth = $context->attributes['auth'] ?? null;
-        if (is_array($auth)) {
-            $provider = is_string($auth['provider'] ?? null) ? $auth['provider'] : 'auth';
-            $userId = $auth['userId'] ?? null;
-            if (is_int($userId) && $userId > 0) {
-                return $provider . ':user:' . $userId;
-            }
-
-            $subject = $auth['subject'] ?? null;
-            if (is_string($subject) && $subject !== '') {
-                return $provider . ':sub:' . $subject;
-            }
+        $identity = RequestIdentity::key($context);
+        if ($identity !== 'guest') {
+            return $identity;
         }
 
         $clientIp = $this->resolveClientIp($context);

@@ -8,6 +8,7 @@ use BetterRoute\Http\RequestContext;
 use BetterRoute\Http\Response;
 use BetterRoute\Http\ResponseNormalizer;
 use BetterRoute\Middleware\Pipeline;
+use BetterRoute\Middleware\WordPressRouteMiddlewareInterface;
 use InvalidArgumentException;
 use Throwable;
 
@@ -73,9 +74,12 @@ final class Router
     {
         $this->groupPrefixes[] = trim($prefix, '/');
         $this->groupMiddlewares[] = [];
-        $callback($this);
-        array_pop($this->groupPrefixes);
-        array_pop($this->groupMiddlewares);
+        try {
+            $callback($this);
+        } finally {
+            array_pop($this->groupPrefixes);
+            array_pop($this->groupMiddlewares);
+        }
         return $this;
     }
 
@@ -158,6 +162,12 @@ final class Router
         $dispatcher ??= new WordPressRestDispatcher();
 
         foreach ($this->routes as $route) {
+            foreach ($route->middlewares as $middleware) {
+                if ($middleware instanceof WordPressRouteMiddlewareInterface) {
+                    $middleware->registerWordPressRoute($this->baseNamespace(), $route->uri);
+                }
+            }
+
             $permission = is_callable($route->permissionCallback)
                 ? $route->permissionCallback
                 : $this->defaultPermissionForRoute($route);
@@ -173,9 +183,9 @@ final class Router
 
     private function defaultPermissionForRoute(RouteDefinition $route): callable
     {
-        return in_array($route->method, ['GET', 'OPTIONS'], true)
-            ? static fn (): bool => true
-            : static fn (): bool => false;
+        // An omitted permission is always a configuration error from a security
+        // perspective. Public reads and preflights must be marked deliberately.
+        return static fn (): bool => false;
     }
 
     /**

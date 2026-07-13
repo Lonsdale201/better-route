@@ -18,6 +18,7 @@ final class WordPressCptRepository implements CptDeleteModeRepositoryInterface
         $args = [
             'post_type' => $postType,
             'post_status' => 'publish',
+            'has_password' => false,
             'posts_per_page' => $query->perPage,
             'paged' => $query->page,
             'no_found_rows' => false,
@@ -27,10 +28,9 @@ final class WordPressCptRepository implements CptDeleteModeRepositoryInterface
             $this->applyFilter($args, $filter, $value);
         }
 
-        if ($query->sortField !== null) {
-            $args['orderby'] = $this->mapSortField($query->sortField);
-            $args['order'] = $query->sortDirection;
-        }
+        $direction = strtoupper($query->sortDirection) === 'ASC' ? 'ASC' : 'DESC';
+        $sortField = $query->sortField !== null ? $this->mapSortField($query->sortField) : 'date';
+        $args['orderby'] = [$sortField => $direction, 'ID' => $direction];
 
         $wpQuery = new \WP_Query($args);
         $items = [];
@@ -170,6 +170,14 @@ final class WordPressCptRepository implements CptDeleteModeRepositoryInterface
             return;
         }
 
+        $reserved = [
+            'post_type', 'posts_per_page', 'paged', 'no_found_rows', 'fields',
+            'orderby', 'order', 'has_password', 'suppress_filters', 'perm',
+        ];
+        if (in_array($filter, $reserved, true)) {
+            throw new \InvalidArgumentException(sprintf('CPT filter "%s" is reserved.', $filter));
+        }
+
         $args[$filter] = $value;
     }
 
@@ -207,8 +215,31 @@ final class WordPressCptRepository implements CptDeleteModeRepositoryInterface
             'date' => (string) ($post->post_date_gmt ?? ''),
             'status' => (string) ($post->post_status ?? ''),
             'author' => (int) ($post->post_author ?? 0),
+            'password_protected' => (string) ($post->post_password ?? '') !== '',
+            'publicly_queryable' => $this->isPostTypePubliclyViewable((string) ($post->post_type ?? '')),
+            'can_read' => function_exists('current_user_can')
+                ? (bool) current_user_can('read_post', (int) ($post->ID ?? 0))
+                : false,
             default => isset($post->$field) ? $post->$field : null,
         };
+    }
+
+    private function isPostTypePubliclyViewable(string $postType): bool
+    {
+        if (!function_exists('get_post_type_object')) {
+            return true;
+        }
+
+        $object = get_post_type_object($postType);
+        if (!is_object($object)) {
+            return false;
+        }
+
+        if (function_exists('is_post_type_viewable')) {
+            return (bool) is_post_type_viewable($object);
+        }
+
+        return $object->publicly_queryable === true;
     }
 
     /**

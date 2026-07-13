@@ -9,6 +9,8 @@ use BetterRoute\Http\ConflictException;
 use BetterRoute\Http\RequestContext;
 use BetterRoute\Http\Response;
 use BetterRoute\Middleware\MiddlewareInterface;
+use BetterRoute\Support\Canonicalizer;
+use BetterRoute\Support\RequestIdentity;
 
 final class IdempotencyMiddleware implements MiddlewareInterface
 {
@@ -32,11 +34,22 @@ final class IdempotencyMiddleware implements MiddlewareInterface
         private readonly bool $requireKey = false,
         array $methods = ['POST', 'PUT', 'PATCH', 'DELETE'],
         ?callable $keyResolver = null,
-        ?callable $fingerprintResolver = null
+        ?callable $fingerprintResolver = null,
+        private readonly int $maxKeyLength = 200
     ) {
+        if ($ttlSeconds < 1) {
+            throw new \InvalidArgumentException('Idempotency TTL must be positive.');
+        }
+        if ($maxKeyLength < 1) {
+            throw new \InvalidArgumentException('Idempotency key length must be positive.');
+        }
         $this->methods = array_values(array_map(static fn (string $method): string => strtoupper($method), $methods));
 
-        $this->keyResolver = $keyResolver ?? fn (RequestContext $context, string $idempotencyKey): string => $context->routePath . '|' . $this->identityKey($context) . '|' . $idempotencyKey;
+        $this->keyResolver = $keyResolver ?? static fn (RequestContext $context, string $idempotencyKey): string => Canonicalizer::json([
+            'route' => $context->routePath,
+            'identity' => RequestIdentity::key($context),
+            'key' => $idempotencyKey,
+        ]);
         $this->fingerprintResolver = $fingerprintResolver ?? fn (RequestContext $context): string => $this->defaultFingerprint($context);
     }
 
@@ -75,9 +88,13 @@ final class IdempotencyMiddleware implements MiddlewareInterface
 
         $response = $next($context);
 
+        if ($this->isWpError($response)) {
+            return $response;
+        }
+
         $payload = [
             'fingerprint' => $fingerprint,
-            'response' => $response,
+            'response' => StoredResponseCodec::normalizeForStorage($response),
         ];
 
         $this->store->set($storeKey, $payload, max(1, $this->ttlSeconds));
@@ -97,7 +114,14 @@ final class IdempotencyMiddleware implements MiddlewareInterface
         }
 
         $key = trim($header);
-        return $key !== '' ? $key : null;
+        if ($key === '') {
+            return null;
+        }
+        if (strlen($key) > $this->maxKeyLength || preg_match('/^[\x21-\x7E]+$/D', $key) !== 1) {
+            throw new ApiException('Idempotency key is invalid.', 400, 'idempotency_key_invalid');
+        }
+
+        return $key;
     }
 
     private function defaultFingerprint(RequestContext $context): string
@@ -126,33 +150,12 @@ final class IdempotencyMiddleware implements MiddlewareInterface
             }
         }
 
-        ksort($params);
-
-        return sha1(json_encode([
+        return sha1(Canonicalizer::json([
             'route' => $context->routePath,
             'method' => $method,
-            'identity' => $this->identityKey($context),
+            'identity' => RequestIdentity::key($context),
             'params' => $params,
         ]));
-    }
-
-    private function identityKey(RequestContext $context): string
-    {
-        $auth = $context->attributes['auth'] ?? null;
-        if (is_array($auth)) {
-            $provider = is_string($auth['provider'] ?? null) ? $auth['provider'] : 'auth';
-            $userId = $auth['userId'] ?? null;
-            if (is_int($userId) && $userId > 0) {
-                return $provider . ':user:' . $userId;
-            }
-
-            $subject = $auth['subject'] ?? null;
-            if (is_string($subject) && $subject !== '') {
-                return $provider . ':sub:' . $subject;
-            }
-        }
-
-        return 'guest';
     }
 
     private function requestMethod(mixed $request): string
@@ -169,11 +172,21 @@ final class IdempotencyMiddleware implements MiddlewareInterface
 
     private function withReplayHeader(mixed $response): mixed
     {
-        if (!$response instanceof Response) {
+        if ($response instanceof Response) {
+            $headers = array_merge($response->headers, ['Idempotency-Replayed' => 'true']);
+            return new Response($response->body, $response->status, $headers);
+        }
+
+        if (is_object($response) && method_exists($response, 'header')) {
+            $response->header('Idempotency-Replayed', 'true');
             return $response;
         }
 
-        $headers = array_merge($response->headers, ['Idempotency-Replayed' => 'true']);
-        return new Response($response->body, $response->status, $headers);
+        return new Response($response, 200, ['Idempotency-Replayed' => 'true']);
+    }
+
+    private function isWpError(mixed $response): bool
+    {
+        return class_exists('WP_Error') && $response instanceof \WP_Error;
     }
 }

@@ -16,7 +16,8 @@ final class OptimisticLockMiddleware implements MiddlewareInterface
         private readonly OptimisticLockVersionResolverInterface $versionResolver,
         private readonly bool $required = true,
         private readonly string $headerName = 'if-match',
-        private readonly string $paramName = 'version'
+        private readonly string $paramName = 'version',
+        private readonly ?OptimisticLockCriticalSectionInterface $criticalSection = null
     ) {
     }
 
@@ -33,30 +34,38 @@ final class OptimisticLockMiddleware implements MiddlewareInterface
             return $next($context);
         }
 
-        $current = $this->versionResolver->resolve($context);
-        if ($current === null || $current === '') {
-            throw new ConflictException('Version is unavailable.', 'version_unavailable');
-        }
+        $criticalSection = $this->criticalSection ?? new WpdbOptimisticLockCriticalSection();
 
-        $currentNormalized = $this->normalizeVersion($current);
+        return $criticalSection->execute($context, function () use ($context, $expected, $next): mixed {
+            // Resolve again while holding the same per-resource database lock
+            // that encloses the write handler. Concurrent Better Route writes
+            // can no longer both pass the same stale version check.
+            $current = $this->versionResolver->resolve($context);
+            if ($current === null || $current === '') {
+                throw new ConflictException('Version is unavailable.', 'version_unavailable');
+            }
 
-        if ($expected !== '*' && $currentNormalized !== $expected) {
-            throw new PreconditionFailedException(
-                message: 'Optimistic lock failed.',
-                errorCode: 'optimistic_lock_failed',
-                details: [
-                    'expected' => $expected,
-                    'current' => $currentNormalized,
-                ]
-            );
-        }
+            $currentNormalized = $this->normalizeVersion($current);
 
-        $ctx = $context->withAttribute('optimisticLock', [
-            'expected' => $expected,
-            'current' => $currentNormalized,
-        ]);
+            if ($expected !== '*' && $currentNormalized !== $expected) {
+                throw new PreconditionFailedException(
+                    message: 'Optimistic lock failed.',
+                    errorCode: 'optimistic_lock_failed',
+                    details: [
+                        'expected' => $expected,
+                        'current' => $currentNormalized,
+                    ]
+                );
+            }
 
-        return $next($ctx);
+            $ctx = $context->withAttribute('optimisticLock', [
+                'expected' => $expected,
+                'current' => $currentNormalized,
+                'atomic' => true,
+            ]);
+
+            return $next($ctx);
+        });
     }
 
     private function extractExpectedVersion(mixed $request): ?string

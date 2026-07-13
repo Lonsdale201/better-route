@@ -65,6 +65,19 @@ final class RegressionFixesTest extends TestCase
         self::assertSame('*', $headers['Access-Control-Allow-Origin']);
     }
 
+    public function testCorsRejectsHeaderInjectionAndOriginPaths(): void
+    {
+        try {
+            new CorsPolicy(['https://example.com/path']);
+            self::fail('An origin with a path must be rejected.');
+        } catch (\InvalidArgumentException) {
+            self::assertTrue(true);
+        }
+
+        $this->expectException(\InvalidArgumentException::class);
+        new CorsPolicy(['https://example.com'], allowedHeaders: ["X-Good\r\nX-Evil"]);
+    }
+
     public function testErrorNormalizerDoesNotLeakGenericThrowableDetails(): void
     {
         $response = (new ErrorNormalizer())->fromThrowable(
@@ -115,7 +128,11 @@ final class RegressionFixesTest extends TestCase
             }
         };
 
-        $middleware = new OptimisticLockMiddleware($resolver, required: true);
+        $middleware = new OptimisticLockMiddleware(
+            $resolver,
+            required: true,
+            criticalSection: new PassthroughOptimisticLockCriticalSection()
+        );
         $context = new RequestContext('req', '/things/1', []);
 
         try {

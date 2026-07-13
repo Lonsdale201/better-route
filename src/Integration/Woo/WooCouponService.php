@@ -130,7 +130,7 @@ final class WooCouponService
         $args = [
             'posts_per_page' => $query->perPage,
             'paged' => $query->page,
-            'orderby' => $this->mapSortField($query->sortField),
+            'orderby' => $this->stableSort($query->sortField),
             'order' => $query->sortDirection,
             'post_type' => 'shop_coupon',
             'post_status' => 'publish',
@@ -208,12 +208,6 @@ final class WooCouponService
             throw $this->validationError(['code' => ['coupon code is required']]);
         }
 
-        // Reject duplicate codes up front — two published coupons sharing a code
-        // make WC_Coupon( code ) resolution ambiguous at apply time.
-        if (function_exists('wc_get_coupon_id_by_code') && (int) wc_get_coupon_id_by_code($code) > 0) {
-            throw new ApiException('A coupon with this code already exists.', 409, 'coupon_exists');
-        }
-
         $coupon = new \WC_Coupon();
         $this->persistCoupon($coupon, $payload);
 
@@ -251,9 +245,19 @@ final class WooCouponService
     private function persistCoupon(object $coupon, array $payload): void
     {
         try {
-            $this->applyPayload($coupon, $payload);
-            if (method_exists($coupon, 'save')) {
-                $coupon->save();
+            $this->validatePayload($payload);
+            $persist = function () use ($coupon, $payload): void {
+                $this->assertCouponCodeAvailable($coupon, $payload);
+                $this->applyPayload($coupon, $payload);
+                if (method_exists($coupon, 'save')) {
+                    $coupon->save();
+                }
+            };
+
+            if (array_key_exists('code', $payload) && is_string($payload['code'])) {
+                $this->withCouponCodeLock($payload['code'], $persist);
+            } else {
+                $persist();
             }
         } catch (\WC_Data_Exception $exception) {
             $code = $exception->getErrorCode();
@@ -262,6 +266,61 @@ final class WooCouponService
                 400,
                 $code !== '' ? $code : 'validation_failed'
             );
+        }
+    }
+
+    /** @param array<string, mixed> $payload */
+    private function validatePayload(array $payload): void
+    {
+        foreach (['code', 'discount_type', 'description'] as $field) {
+            if (array_key_exists($field, $payload) && !is_string($payload[$field])) {
+                throw $this->validationError([$field => ['must be a string']]);
+            }
+        }
+
+        if (array_key_exists('code', $payload) && trim((string) $payload['code']) === '') {
+            throw $this->validationError(['code' => ['must be a non-empty string']]);
+        }
+
+        if (array_key_exists('date_expires', $payload)
+            && $payload['date_expires'] !== null
+            && !is_string($payload['date_expires'])
+        ) {
+            throw $this->validationError(['date_expires' => ['must be a string or null']]);
+        }
+
+        if (array_key_exists('amount', $payload)) {
+            $this->nonNegativeNumber($payload['amount'], 'amount');
+        }
+        foreach (['usage_limit', 'usage_limit_per_user'] as $field) {
+            if (array_key_exists($field, $payload)) {
+                $this->nonNegativeInteger($payload[$field], $field);
+            }
+        }
+        if (array_key_exists('limit_usage_to_x_items', $payload) && $payload['limit_usage_to_x_items'] !== null) {
+            $this->nonNegativeInteger($payload['limit_usage_to_x_items'], 'limit_usage_to_x_items');
+        }
+        foreach (['individual_use', 'free_shipping', 'exclude_sale_items'] as $field) {
+            if (array_key_exists($field, $payload)) {
+                $this->boolFromMixed($payload[$field], $field);
+            }
+        }
+        foreach (['minimum_amount', 'maximum_amount'] as $field) {
+            if (array_key_exists($field, $payload)) {
+                $this->nonNegativeNumber($payload[$field], $field);
+            }
+        }
+        if (array_key_exists('product_ids', $payload)) {
+            $this->parseIntArray($payload['product_ids'], 'product_ids');
+        }
+        if (array_key_exists('excluded_product_ids', $payload)) {
+            $this->parseIntArray($payload['excluded_product_ids'], 'excluded_product_ids');
+        }
+        if (array_key_exists('email_restrictions', $payload)) {
+            $this->parseStringArray($payload['email_restrictions'], 'email_restrictions');
+        }
+        if (array_key_exists('meta_data', $payload)) {
+            MetaDataHelper::normalizeIncoming($payload['meta_data']);
         }
     }
 
@@ -276,6 +335,49 @@ final class WooCouponService
 
         $deleted = $coupon->delete($force);
         return $deleted !== false;
+    }
+
+    /** @param array<string, mixed> $payload */
+    private function assertCouponCodeAvailable(object $coupon, array $payload): void
+    {
+        if (!array_key_exists('code', $payload) || !is_string($payload['code'])) {
+            return;
+        }
+
+        $currentId = method_exists($coupon, 'get_id') ? (int) $coupon->get_id() : 0;
+        $existingId = function_exists('wc_get_coupon_id_by_code')
+            ? (int) wc_get_coupon_id_by_code($payload['code'], $currentId)
+            : 0;
+        if ($existingId > 0) {
+            throw new ApiException('A coupon with this code already exists.', 409, 'coupon_exists');
+        }
+    }
+
+    private function withCouponCodeLock(string $code, callable $callback): mixed
+    {
+        if (!isset($GLOBALS['wpdb'])
+            || !is_object($GLOBALS['wpdb'])
+            || !method_exists($GLOBALS['wpdb'], 'prepare')
+            || !method_exists($GLOBALS['wpdb'], 'get_var')
+        ) {
+            return $callback();
+        }
+
+        $normalized = function_exists('wc_format_coupon_code')
+            ? (string) wc_format_coupon_code($code)
+            : strtolower(trim($code));
+        $wpdb = $GLOBALS['wpdb'];
+        $lockName = 'better_route_coupon_' . sha1($normalized);
+        $acquired = $wpdb->get_var($wpdb->prepare('SELECT GET_LOCK(%s, %d)', $lockName, 2));
+        if ((int) $acquired !== 1) {
+            throw new ApiException('Coupon code is being modified.', 409, 'coupon_write_in_progress');
+        }
+
+        try {
+            return $callback();
+        } finally {
+            $wpdb->get_var($wpdb->prepare('SELECT RELEASE_LOCK(%s)', $lockName));
+        }
     }
 
     /**
@@ -326,7 +428,7 @@ final class WooCouponService
         }
 
         if (array_key_exists('amount', $payload) && method_exists($coupon, 'set_amount')) {
-            $coupon->set_amount((float) $payload['amount']);
+            $coupon->set_amount($this->nonNegativeNumber($payload['amount'], 'amount'));
         }
 
         if (array_key_exists('discount_type', $payload) && method_exists($coupon, 'set_discount_type')) {
@@ -343,20 +445,25 @@ final class WooCouponService
         }
 
         if (array_key_exists('usage_limit', $payload) && method_exists($coupon, 'set_usage_limit')) {
-            $coupon->set_usage_limit((int) $payload['usage_limit']);
+            $coupon->set_usage_limit($this->nonNegativeInteger($payload['usage_limit'], 'usage_limit'));
         }
 
         if (array_key_exists('usage_limit_per_user', $payload) && method_exists($coupon, 'set_usage_limit_per_user')) {
-            $coupon->set_usage_limit_per_user((int) $payload['usage_limit_per_user']);
+            $coupon->set_usage_limit_per_user($this->nonNegativeInteger(
+                $payload['usage_limit_per_user'],
+                'usage_limit_per_user'
+            ));
         }
 
         if (array_key_exists('limit_usage_to_x_items', $payload) && method_exists($coupon, 'set_limit_usage_to_x_items')) {
             $value = $payload['limit_usage_to_x_items'];
-            $coupon->set_limit_usage_to_x_items(is_numeric($value) ? (int) $value : null);
+            $coupon->set_limit_usage_to_x_items(
+                $value === null ? null : $this->nonNegativeInteger($value, 'limit_usage_to_x_items')
+            );
         }
 
         if (array_key_exists('individual_use', $payload) && method_exists($coupon, 'set_individual_use')) {
-            $coupon->set_individual_use((bool) $payload['individual_use']);
+            $coupon->set_individual_use($this->boolFromMixed($payload['individual_use'], 'individual_use'));
         }
 
         if (array_key_exists('product_ids', $payload) && method_exists($coupon, 'set_product_ids')) {
@@ -368,15 +475,15 @@ final class WooCouponService
         }
 
         if (array_key_exists('free_shipping', $payload) && method_exists($coupon, 'set_free_shipping')) {
-            $coupon->set_free_shipping((bool) $payload['free_shipping']);
+            $coupon->set_free_shipping($this->boolFromMixed($payload['free_shipping'], 'free_shipping'));
         }
 
         if (array_key_exists('minimum_amount', $payload) && method_exists($coupon, 'set_minimum_amount')) {
-            $coupon->set_minimum_amount((float) $payload['minimum_amount']);
+            $coupon->set_minimum_amount($this->nonNegativeNumber($payload['minimum_amount'], 'minimum_amount'));
         }
 
         if (array_key_exists('maximum_amount', $payload) && method_exists($coupon, 'set_maximum_amount')) {
-            $coupon->set_maximum_amount((float) $payload['maximum_amount']);
+            $coupon->set_maximum_amount($this->nonNegativeNumber($payload['maximum_amount'], 'maximum_amount'));
         }
 
         if (array_key_exists('email_restrictions', $payload) && method_exists($coupon, 'set_email_restrictions')) {
@@ -384,7 +491,7 @@ final class WooCouponService
         }
 
         if (array_key_exists('exclude_sale_items', $payload) && method_exists($coupon, 'set_exclude_sale_items')) {
-            $coupon->set_exclude_sale_items((bool) $payload['exclude_sale_items']);
+            $coupon->set_exclude_sale_items($this->boolFromMixed($payload['exclude_sale_items'], 'exclude_sale_items'));
         }
 
         if (array_key_exists('meta_data', $payload)) {
@@ -429,10 +536,8 @@ final class WooCouponService
         }
 
         $result = [];
-        foreach ($value as $item) {
-            if (is_numeric($item)) {
-                $result[] = (int) $item;
-            }
+        foreach ($value as $index => $item) {
+            $result[] = $this->positiveInteger($item, $field . '.' . $index);
         }
 
         return $result;
@@ -448,13 +553,85 @@ final class WooCouponService
         }
 
         $result = [];
-        foreach ($value as $item) {
-            if (is_string($item) && $item !== '') {
-                $result[] = $item;
+        foreach ($value as $index => $item) {
+            if (!is_string($item) || trim($item) === '') {
+                throw $this->validationError([$field . '.' . $index => ['must be a non-empty string']]);
             }
+
+            $result[] = trim($item);
         }
 
         return $result;
+    }
+
+    private function positiveInteger(mixed $value, string $field): int
+    {
+        $integer = $this->integer($value, $field);
+        if ($integer < 1) {
+            throw $this->validationError([$field => ['must be greater than zero']]);
+        }
+
+        return $integer;
+    }
+
+    private function nonNegativeInteger(mixed $value, string $field): int
+    {
+        $integer = $this->integer($value, $field);
+        if ($integer < 0) {
+            throw $this->validationError([$field => ['must be zero or greater']]);
+        }
+
+        return $integer;
+    }
+
+    private function integer(mixed $value, string $field): int
+    {
+        if (is_int($value)) {
+            return $value;
+        }
+
+        if (is_string($value) && preg_match('/^-?\d+$/D', $value) === 1) {
+            return (int) $value;
+        }
+
+        throw $this->validationError([$field => ['must be an integer']]);
+    }
+
+    private function nonNegativeNumber(mixed $value, string $field): string
+    {
+        if ((!is_int($value) && !is_float($value) && !is_string($value))
+            || !is_numeric($value)
+            || !is_finite((float) $value)
+            || (float) $value < 0
+        ) {
+            throw $this->validationError([$field => ['must be a non-negative number']]);
+        }
+
+        return (string) $value;
+    }
+
+    private function boolFromMixed(mixed $value, string $field): bool
+    {
+        if (is_bool($value)) {
+            return $value;
+        }
+
+        if (is_int($value) && ($value === 0 || $value === 1)) {
+            return $value === 1;
+        }
+
+        if (is_string($value)) {
+            $normalized = strtolower(trim($value));
+            if (in_array($normalized, ['1', 'true', 'yes'], true)) {
+                return true;
+            }
+
+            if (in_array($normalized, ['0', 'false', 'no'], true)) {
+                return false;
+            }
+        }
+
+        throw $this->validationError([$field => ['must be boolean']]);
     }
 
     /**
@@ -523,6 +700,12 @@ final class WooCouponService
             'code' => 'title',
             default => 'date',
         };
+    }
+
+    private function stableSort(string $field): string
+    {
+        $mapped = $this->mapSortField($field);
+        return $mapped === 'ID' ? $mapped : $mapped . ' ID';
     }
 
     private function dateToAtom(mixed $value): ?string

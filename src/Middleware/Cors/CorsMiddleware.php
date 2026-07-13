@@ -8,8 +8,9 @@ use BetterRoute\Http\ApiException;
 use BetterRoute\Http\RequestContext;
 use BetterRoute\Http\Response;
 use BetterRoute\Middleware\MiddlewareInterface;
+use BetterRoute\Middleware\WordPressRouteMiddlewareInterface;
 
-final class CorsMiddleware implements MiddlewareInterface
+final class CorsMiddleware implements MiddlewareInterface, WordPressRouteMiddlewareInterface
 {
     public function __construct(
         private readonly CorsPolicy $policy,
@@ -32,6 +33,27 @@ final class CorsMiddleware implements MiddlewareInterface
 
         $response = $next($context);
         return $this->withHeaders($response, $headers);
+    }
+
+    public function registerWordPressRoute(string $namespace, string $route): void
+    {
+        WordPressCorsBridge::register($namespace, $route, $this);
+    }
+
+    /** @return array<string, string> */
+    public function headersForRequest(mixed $request): array
+    {
+        return $this->policy->headersFor($this->header($request, 'origin'));
+    }
+
+    public function rejectsDisallowedOrigins(): bool
+    {
+        return $this->rejectDisallowedOrigins;
+    }
+
+    public function isPreflightRequest(mixed $request): bool
+    {
+        return $this->isPreflight($request);
     }
 
     private function isPreflight(mixed $request): bool

@@ -137,7 +137,7 @@ final class WooProductService
             'paginate' => true,
             'limit' => $query->perPage,
             'page' => $query->page,
-            'orderby' => $this->mapSortField($query->sortField),
+            'orderby' => $this->stableSort($query->sortField),
             'order' => $query->sortDirection,
             'return' => 'objects',
         ];
@@ -231,10 +231,7 @@ final class WooProductService
             throw $this->validationError(['type' => ['unsupported product type']]);
         }
 
-        $this->applyPayload($product, $payload, true);
-        if (method_exists($product, 'save')) {
-            $product->save();
-        }
+        $this->persistProduct($product, $payload, true);
 
         return $this->mapProduct($product, $fields);
     }
@@ -262,10 +259,7 @@ final class WooProductService
             }
         }
 
-        $this->applyPayload($product, $payload, false);
-        if (method_exists($product, 'save')) {
-            $product->save();
-        }
+        $this->persistProduct($product, $payload, false);
 
         return $this->mapProduct($product, $fields);
     }
@@ -346,6 +340,63 @@ final class WooProductService
         throw $this->validationError($fieldErrors);
     }
 
+    /** @param array<string, mixed> $payload */
+    private function persistProduct(object $product, array $payload, bool $isCreate): void
+    {
+        try {
+            $this->validatePayload($payload);
+            $this->applyPayload($product, $payload, $isCreate);
+            if (method_exists($product, 'save')) {
+                $product->save();
+            }
+        } catch (\WC_Data_Exception $exception) {
+            $code = $exception->getErrorCode();
+            throw new ApiException(
+                $exception->getMessage() !== '' ? $exception->getMessage() : 'Invalid request.',
+                400,
+                $code !== '' ? $code : 'validation_failed'
+            );
+        }
+    }
+
+    /** @param array<string, mixed> $payload */
+    private function validatePayload(array $payload): void
+    {
+        foreach ([
+            'name', 'slug', 'status', 'type', 'sku', 'catalog_visibility',
+            'description', 'short_description', 'stock_status',
+        ] as $field) {
+            if (array_key_exists($field, $payload) && !is_string($payload[$field])) {
+                throw $this->validationError([$field => ['must be a string']]);
+            }
+        }
+
+        foreach (['regular_price', 'sale_price'] as $field) {
+            if (!array_key_exists($field, $payload)) {
+                continue;
+            }
+
+            $value = $payload[$field];
+            if ($value !== '' && (!is_numeric($value) || !is_finite((float) $value) || (float) $value < 0)) {
+                throw $this->validationError([$field => ['must be empty or a non-negative number']]);
+            }
+        }
+
+        if (array_key_exists('stock_quantity', $payload)) {
+            $this->nullableInteger($payload['stock_quantity'], 'stock_quantity');
+        }
+
+        foreach (['manage_stock', 'virtual', 'downloadable'] as $field) {
+            if (array_key_exists($field, $payload)) {
+                $this->boolFromMixed($payload[$field], $field);
+            }
+        }
+
+        if (array_key_exists('meta_data', $payload)) {
+            MetaDataHelper::normalizeIncoming($payload['meta_data']);
+        }
+    }
+
     /**
      * @param array<string, mixed> $payload
      */
@@ -396,8 +447,10 @@ final class WooProductService
         }
 
         if (array_key_exists('stock_quantity', $payload) && method_exists($product, 'set_stock_quantity')) {
-            $quantity = is_numeric($payload['stock_quantity']) ? (int) $payload['stock_quantity'] : null;
-            $product->set_stock_quantity($quantity);
+            $product->set_stock_quantity($this->nullableInteger(
+                $payload['stock_quantity'],
+                'stock_quantity'
+            ));
         }
 
         if (array_key_exists('manage_stock', $payload) && method_exists($product, 'set_manage_stock')) {
@@ -442,6 +495,23 @@ final class WooProductService
         throw $this->validationError([$field => ['must be boolean']]);
     }
 
+    private function nullableInteger(mixed $value, string $field): ?int
+    {
+        if ($value === null) {
+            return null;
+        }
+
+        if (is_int($value)) {
+            return $value;
+        }
+
+        if (is_string($value) && preg_match('/^-?\d+$/D', $value) === 1) {
+            return (int) $value;
+        }
+
+        throw $this->validationError([$field => ['must be an integer or null']]);
+    }
+
     private function mapSortField(string $field): string
     {
         // Note: WooCommerce's product query does not reliably order by 'price'
@@ -454,6 +524,12 @@ final class WooProductService
             'title' => 'title',
             default => 'date',
         };
+    }
+
+    private function stableSort(string $field): string
+    {
+        $mapped = $this->mapSortField($field);
+        return $mapped === 'ID' ? $mapped : $mapped . ' ID';
     }
 
     private function dateToAtom(mixed $value): ?string

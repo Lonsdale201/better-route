@@ -46,6 +46,22 @@ final class CorsPolicy
                 . 'List explicit allowed origins when allowCredentials is enabled.'
             );
         }
+
+        if ($maxAgeSeconds < 0) {
+            throw new InvalidArgumentException('CORS maxAgeSeconds must be zero or greater.');
+        }
+
+        foreach ($allowedOrigins as $origin) {
+            $this->assertValidOrigin($origin);
+        }
+
+        foreach ($allowedMethods as $method) {
+            $this->assertToken($method, 'method');
+        }
+
+        foreach (array_merge($allowedHeaders, $exposedHeaders) as $header) {
+            $this->assertToken($header, 'header name');
+        }
     }
 
     /**
@@ -63,7 +79,7 @@ final class CorsPolicy
             'Access-Control-Allow-Methods' => implode(', ', $this->normalizeTokens($this->allowedMethods)),
             'Access-Control-Allow-Headers' => implode(', ', $this->normalizeTokens($this->allowedHeaders)),
             'Access-Control-Expose-Headers' => implode(', ', $this->normalizeTokens($this->exposedHeaders)),
-            'Access-Control-Max-Age' => (string) max(0, $this->maxAgeSeconds),
+            'Access-Control-Max-Age' => (string) $this->maxAgeSeconds,
             'Vary' => 'Origin',
         ];
 
@@ -107,5 +123,34 @@ final class CorsPolicy
         }
 
         return array_values(array_unique($result));
+    }
+
+    private function assertValidOrigin(string $origin): void
+    {
+        $origin = trim($origin);
+        if ($origin === '*' || $origin === 'null') {
+            return;
+        }
+
+        if ($origin === '' || preg_match('/[\r\n]/', $origin) === 1) {
+            throw new InvalidArgumentException('CORS origins must be valid serialized origins.');
+        }
+
+        $parts = parse_url($origin);
+        if (!is_array($parts)
+            || !isset($parts['scheme'], $parts['host'])
+            || isset($parts['user'], $parts['pass'], $parts['query'], $parts['fragment'])
+            || (isset($parts['path']) && $parts['path'] !== '' && $parts['path'] !== '/')
+        ) {
+            throw new InvalidArgumentException(sprintf('Invalid CORS origin: %s', $origin));
+        }
+    }
+
+    private function assertToken(string $value, string $type): void
+    {
+        $value = trim($value);
+        if ($value === '' || preg_match("/^[!#$%&'*+.^_`|~0-9A-Za-z-]+$/D", $value) !== 1) {
+            throw new InvalidArgumentException(sprintf('Invalid CORS %s: %s', $type, $value));
+        }
     }
 }

@@ -7,6 +7,8 @@ namespace BetterRoute\Middleware\Cache;
 use BetterRoute\Http\RequestContext;
 use BetterRoute\Http\Response;
 use BetterRoute\Middleware\MiddlewareInterface;
+use BetterRoute\Support\Canonicalizer;
+use BetterRoute\Support\RequestIdentity;
 
 /**
  * Identity-aware GET response cache.
@@ -29,6 +31,9 @@ final class CachingMiddleware implements MiddlewareInterface
         private readonly int $ttlSeconds = 60,
         ?callable $keyResolver = null
     ) {
+        if ($ttlSeconds < 1) {
+            throw new \InvalidArgumentException('Cache TTL must be positive.');
+        }
         $this->keyResolver = $keyResolver ?? fn (RequestContext $context): string => $this->defaultKey($context);
     }
 
@@ -54,6 +59,10 @@ final class CachingMiddleware implements MiddlewareInterface
 
     private function isCacheable(mixed $response): bool
     {
+        if (class_exists('WP_Error') && $response instanceof \WP_Error) {
+            return false;
+        }
+
         // Never cache error responses that were returned (not thrown) — e.g. a
         // 403/404/500 Response would otherwise be replayed for the whole TTL.
         $status = $response instanceof Response ? $response->status : 200;
@@ -84,26 +93,10 @@ final class CachingMiddleware implements MiddlewareInterface
             }
         }
 
-        ksort($params);
-        return sha1($context->routePath . '|' . $this->identityKey($context) . '|' . json_encode($params));
-    }
-
-    private function identityKey(RequestContext $context): string
-    {
-        $auth = $context->attributes['auth'] ?? null;
-        if (is_array($auth)) {
-            $provider = is_string($auth['provider'] ?? null) ? $auth['provider'] : 'auth';
-            $userId = $auth['userId'] ?? null;
-            if (is_int($userId) && $userId > 0) {
-                return $provider . ':user:' . $userId;
-            }
-
-            $subject = $auth['subject'] ?? null;
-            if (is_string($subject) && $subject !== '') {
-                return $provider . ':sub:' . $subject;
-            }
-        }
-
-        return 'guest';
+        return sha1(Canonicalizer::json([
+            'route' => $context->routePath,
+            'identity' => RequestIdentity::key($context),
+            'params' => $params,
+        ]));
     }
 }

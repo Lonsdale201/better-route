@@ -10,6 +10,7 @@ use BetterRoute\Http\Response;
 use BetterRoute\Middleware\Observability\MetricsMiddleware;
 use BetterRoute\Observability\AuditEventFactory;
 use BetterRoute\Observability\InMemoryMetricSink;
+use BetterRoute\Observability\MetricSinkInterface;
 use BetterRoute\Observability\PrometheusMetricSink;
 use PHPUnit\Framework\TestCase;
 
@@ -55,6 +56,34 @@ final class ObservabilityBaselineTest extends TestCase
         self::assertStringContainsString('# TYPE better_route_requests_total counter', $render);
         self::assertStringContainsString('better_route_requests_total{method="GET",route="/ping",status_class="2xx"} 1', $render);
         self::assertStringContainsString('# TYPE better_route_request_duration_seconds summary', $render);
+    }
+
+    public function testMetricsSinkFailureDoesNotFailTheRequest(): void
+    {
+        $sink = new class () implements MetricSinkInterface {
+            public function increment(string $name, int $value = 1, array $labels = []): void
+            {
+                throw new \RuntimeException('metrics backend down');
+            }
+
+            public function observe(string $name, float $value, array $labels = []): void
+            {
+                throw new \RuntimeException('metrics backend down');
+            }
+        };
+
+        $result = (new MetricsMiddleware($sink))->handle(
+            new RequestContext('req_metric_failure', '/metrics', new ObservabilityRequest('GET')),
+            static fn (): string => 'ok'
+        );
+
+        self::assertSame('ok', $result);
+    }
+
+    public function testPrometheusSinkRejectsInvalidNames(): void
+    {
+        $this->expectException(\InvalidArgumentException::class);
+        (new PrometheusMetricSink())->increment("bad\nmetric");
     }
 
     public function testAuditEventFactoryProvidesStandardSchema(): void

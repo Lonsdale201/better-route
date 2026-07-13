@@ -9,6 +9,7 @@ use BetterRoute\Http\RequestContext;
 use BetterRoute\Http\Response;
 use BetterRoute\Middleware\MiddlewareInterface;
 use BetterRoute\Observability\MetricSinkInterface;
+use InvalidArgumentException;
 use Throwable;
 
 final class MetricsMiddleware implements MiddlewareInterface
@@ -24,6 +25,9 @@ final class MetricsMiddleware implements MiddlewareInterface
         ?callable $clock = null,
         private readonly string $metricPrefix = 'better_route_'
     ) {
+        if (preg_match('/^[a-zA-Z_:][a-zA-Z0-9_:]*$/D', $metricPrefix) !== 1) {
+            throw new InvalidArgumentException('Metric prefix is not a valid Prometheus name prefix.');
+        }
         $this->clock = $clock ?? static fn (): float => microtime(true);
     }
 
@@ -42,11 +46,11 @@ final class MetricsMiddleware implements MiddlewareInterface
                 'status_class' => $this->statusClass($statusCode),
             ];
 
-            $this->metrics->increment($this->metricPrefix . 'requests_total', 1, $labels);
-            $this->metrics->observe($this->metricPrefix . 'request_duration_seconds', ($this->clock)() - $startedAt, $labels);
+            $this->safeIncrement($this->metricPrefix . 'requests_total', 1, $labels);
+            $this->safeObserve($this->metricPrefix . 'request_duration_seconds', ($this->clock)() - $startedAt, $labels);
 
             if ($statusCode >= 400) {
-                $this->metrics->increment($this->metricPrefix . 'errors_total', 1, $labels + [
+                $this->safeIncrement($this->metricPrefix . 'errors_total', 1, $labels + [
                     'error_code' => $this->responseErrorCode($result),
                 ]);
             }
@@ -62,9 +66,9 @@ final class MetricsMiddleware implements MiddlewareInterface
                 'status_class' => $this->statusClass($statusCode),
             ];
 
-            $this->metrics->increment($this->metricPrefix . 'requests_total', 1, $labels);
-            $this->metrics->increment($this->metricPrefix . 'errors_total', 1, $labels + ['error_code' => $errorCode]);
-            $this->metrics->observe($this->metricPrefix . 'request_duration_seconds', ($this->clock)() - $startedAt, $labels);
+            $this->safeIncrement($this->metricPrefix . 'requests_total', 1, $labels);
+            $this->safeIncrement($this->metricPrefix . 'errors_total', 1, $labels + ['error_code' => $errorCode]);
+            $this->safeObserve($this->metricPrefix . 'request_duration_seconds', ($this->clock)() - $startedAt, $labels);
 
             throw $throwable;
         }
@@ -134,5 +138,25 @@ final class MetricsMiddleware implements MiddlewareInterface
         }
 
         return (int) floor($statusCode / 100) . 'xx';
+    }
+
+    /** @param array<string, string> $labels */
+    private function safeIncrement(string $name, int $value, array $labels): void
+    {
+        try {
+            $this->metrics->increment($name, $value, $labels);
+        } catch (Throwable) {
+            // Metrics must not affect request availability.
+        }
+    }
+
+    /** @param array<string, string> $labels */
+    private function safeObserve(string $name, float $value, array $labels): void
+    {
+        try {
+            $this->metrics->observe($name, $value, $labels);
+        } catch (Throwable) {
+            // Metrics must not affect request availability.
+        }
     }
 }

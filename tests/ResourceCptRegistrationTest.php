@@ -370,6 +370,7 @@ final class ArrayCptRepository implements CptDeleteModeRepositoryInterface
     public ?array $item = [
         'id' => 1,
         'title' => 'Article',
+        'status' => 'publish',
     ];
 
     public ?int $lastGetId = null;

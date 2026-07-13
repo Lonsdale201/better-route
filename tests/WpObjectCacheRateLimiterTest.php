@@ -47,6 +47,13 @@ namespace {
             return $GLOBALS['better_route_test_object_cache'][$cacheKey];
         }
     }
+
+    if (!function_exists('wp_using_ext_object_cache')) {
+        function wp_using_ext_object_cache(): bool
+        {
+            return true;
+        }
+    }
 }
 
 namespace BetterRoute\Tests {

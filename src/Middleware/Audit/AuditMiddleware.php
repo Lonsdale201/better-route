@@ -27,7 +27,7 @@ final class AuditMiddleware implements MiddlewareInterface
             $result = $next($context);
             $statusCode = $this->statusCode($result);
 
-            $this->logger->log($this->eventFactory->success(
+            $this->safeLog($this->eventFactory->success(
                 context: $context,
                 method: $this->requestMethod($context->request),
                 statusCode: $statusCode,
@@ -37,12 +37,14 @@ final class AuditMiddleware implements MiddlewareInterface
 
             return $result;
         } catch (Throwable $throwable) {
-            $this->logger->log($this->eventFactory->error(
+            $this->safeLog($this->eventFactory->error(
                 context: $context,
                 method: $this->requestMethod($context->request),
                 statusCode: $throwable instanceof ApiException ? $throwable->status() : 500,
                 errorCode: $throwable instanceof ApiException ? $throwable->errorCode() : 'internal_error',
-                errorMessage: $throwable->getMessage(),
+                errorMessage: $throwable instanceof ApiException
+                    ? $throwable->getMessage()
+                    : 'Unexpected error.',
                 durationMs: $this->durationMs($startedAt),
                 extra: $this->auditExtra($context)
             ));
@@ -95,5 +97,16 @@ final class AuditMiddleware implements MiddlewareInterface
     {
         $extra = $context->attributes['audit'] ?? [];
         return is_array($extra) ? $extra : [];
+    }
+
+    /** @param array<string, mixed> $event */
+    private function safeLog(array $event): void
+    {
+        try {
+            $this->logger->log($event);
+        } catch (Throwable) {
+            // Telemetry is best-effort and must never alter the API result or
+            // mask the application exception that is already in flight.
+        }
     }
 }

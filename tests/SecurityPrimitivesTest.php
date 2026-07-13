@@ -117,6 +117,69 @@ final class SecurityPrimitivesTest extends TestCase
         new HttpJwksProvider('http://issuer.example.test/jwks.json');
     }
 
+    public function testHttpJwksProviderThrottlesRefreshAndPreservesLastGoodKeys(): void
+    {
+        $now = 1700000000;
+        $fetches = 0;
+        /** @var array<string, mixed> $cache */
+        $cache = [];
+        $key = [
+            'kty' => 'RSA',
+            'kid' => 'key-a',
+            'alg' => 'RS256',
+            'use' => 'sig',
+            'n' => 'abc',
+            'e' => 'AQAB',
+        ];
+        /** @var list<string|RuntimeException> $responses */
+        $responses = [
+            (string) json_encode(['keys' => [$key]]),
+            new RuntimeException('JWKS unavailable.'),
+        ];
+
+        $provider = new HttpJwksProvider(
+            'https://issuer.example.test/jwks.json',
+            httpGet: static function () use (&$fetches, &$responses): string {
+                $fetches++;
+                $response = array_shift($responses);
+                if ($response instanceof RuntimeException) {
+                    throw $response;
+                }
+
+                return is_string($response) ? $response : '';
+            },
+            getTransient: static function (string $cacheKey) use (&$cache): mixed {
+                return $cache[$cacheKey] ?? null;
+            },
+            setTransient: static function (string $cacheKey, mixed $value, int $ttlSeconds) use (&$cache): bool {
+                $cache[$cacheKey] = $value;
+                return true;
+            },
+            deleteTransient: static function (string $cacheKey) use (&$cache): bool {
+                unset($cache[$cacheKey]);
+                return true;
+            },
+            now: static function () use (&$now): int {
+                return $now;
+            }
+        );
+
+        self::assertSame([$key], $provider->keys());
+        $provider->refresh();
+        self::assertSame(1, $fetches);
+
+        $now += 31;
+        try {
+            $provider->refresh();
+            self::fail('The failed JWKS refresh must be reported.');
+        } catch (RuntimeException $exception) {
+            self::assertSame('JWKS unavailable.', $exception->getMessage());
+        }
+
+        self::assertSame([$key], $provider->keys());
+        self::assertSame(2, $fetches);
+    }
+
     public function testStaticJwksProviderStripsPrivateFields(): void
     {
         $provider = new StaticJwksProvider([[

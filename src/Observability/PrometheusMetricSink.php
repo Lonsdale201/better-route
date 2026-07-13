@@ -4,6 +4,8 @@ declare(strict_types=1);
 
 namespace BetterRoute\Observability;
 
+use InvalidArgumentException;
+
 final class PrometheusMetricSink implements MetricSinkInterface
 {
     /** @var array<string, array{name: string, labels: array<string, string>, value: int}> */
@@ -17,6 +19,10 @@ final class PrometheusMetricSink implements MetricSinkInterface
      */
     public function increment(string $name, int $value = 1, array $labels = []): void
     {
+        $this->assertMetric($name, $labels);
+        if ($value < 0) {
+            throw new InvalidArgumentException('Prometheus counters cannot be decremented.');
+        }
         $key = $this->key($name, $labels);
 
         if (!isset($this->counters[$key])) {
@@ -35,6 +41,10 @@ final class PrometheusMetricSink implements MetricSinkInterface
      */
     public function observe(string $name, float $value, array $labels = []): void
     {
+        $this->assertMetric($name, $labels);
+        if (!is_finite($value)) {
+            throw new InvalidArgumentException('Prometheus observations must be finite.');
+        }
         $key = $this->key($name, $labels);
 
         if (!isset($this->observations[$key])) {
@@ -122,5 +132,21 @@ final class PrometheusMetricSink implements MetricSinkInterface
     private function escapeLabelValue(string $value): string
     {
         return str_replace(['\\', '"', "\n"], ['\\\\', '\\"', '\\n'], $value);
+    }
+
+    /** @param array<string, string> $labels */
+    private function assertMetric(string $name, array $labels): void
+    {
+        if (preg_match('/^[a-zA-Z_:][a-zA-Z0-9_:]*$/D', $name) !== 1) {
+            throw new InvalidArgumentException('Invalid Prometheus metric name.');
+        }
+
+        foreach (array_keys($labels) as $label) {
+            if (preg_match('/^[a-zA-Z_][a-zA-Z0-9_]*$/D', $label) !== 1
+                || str_starts_with($label, '__')
+            ) {
+                throw new InvalidArgumentException('Invalid Prometheus label name.');
+            }
+        }
     }
 }

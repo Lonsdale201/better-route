@@ -15,6 +15,8 @@ final class Rs256JwksJwtVerifier implements JwtVerifierInterface
     /** @var list<string> */
     private array $allowedAlgorithms;
 
+    private ?int $lastKidMissRefreshAt = null;
+
     /**
      * @param null|callable(): int $now
      * @param list<string> $allowedAlgorithms
@@ -28,7 +30,8 @@ final class Rs256JwksJwtVerifier implements JwtVerifierInterface
         private readonly bool $requireExpiration = true,
         private readonly ?int $maxLifetimeSeconds = null,
         private readonly int $maxTokenLength = 8192,
-        array $allowedAlgorithms = ['RS256']
+        array $allowedAlgorithms = ['RS256'],
+        private readonly int $kidMissRefreshCooldownSeconds = 30
     ) {
         if ($leewaySeconds < 0) {
             throw new RuntimeException('JWT leeway must not be negative.');
@@ -38,6 +41,9 @@ final class Rs256JwksJwtVerifier implements JwtVerifierInterface
         }
         if ($maxLifetimeSeconds !== null && $maxLifetimeSeconds < 1) {
             throw new RuntimeException('JWT max lifetime must be positive.');
+        }
+        if ($kidMissRefreshCooldownSeconds < 0) {
+            throw new RuntimeException('JWT key refresh cooldown must not be negative.');
         }
 
         $this->allowedAlgorithms = $this->normalizeAllowedAlgorithms($allowedAlgorithms);
@@ -64,7 +70,8 @@ final class Rs256JwksJwtVerifier implements JwtVerifierInterface
 
         $kid = $this->headerString($header, 'kid');
         $key = $this->resolveKey($kid, $alg);
-        if ($key === null) {
+        if ($key === null && $this->canRefreshForKidMiss()) {
+            $this->lastKidMissRefreshAt = ($this->now)();
             $this->jwks->refresh();
             $key = $this->resolveKey($kid, $alg);
         }
@@ -354,6 +361,10 @@ final class Rs256JwksJwtVerifier implements JwtVerifierInterface
     {
         $now = ($this->now)();
 
+        if ($this->maxLifetimeSeconds !== null && (!isset($claims['iat']) || !isset($claims['exp']))) {
+            throw new RuntimeException('JWT iat and exp are required when max lifetime is configured.');
+        }
+
         if ($this->requireExpiration && !isset($claims['exp'])) {
             throw new RuntimeException('JWT exp is required.');
         }
@@ -378,7 +389,7 @@ final class Rs256JwksJwtVerifier implements JwtVerifierInterface
                 throw new RuntimeException('JWT expired.');
             }
 
-            if ($this->maxLifetimeSeconds !== null && isset($claims['iat'])) {
+            if ($this->maxLifetimeSeconds !== null) {
                 $issuedAt = $this->parseNumericClaim($claims['iat'], 'iat');
                 if ($expiresAt - $issuedAt > $this->maxLifetimeSeconds) {
                     throw new RuntimeException('JWT lifetime is too long.');
@@ -433,5 +444,14 @@ final class Rs256JwksJwtVerifier implements JwtVerifierInterface
         }
 
         throw new RuntimeException(sprintf('JWT claim %s must be numeric.', $name));
+    }
+
+    private function canRefreshForKidMiss(): bool
+    {
+        if ($this->lastKidMissRefreshAt === null) {
+            return true;
+        }
+
+        return ($this->now)() - $this->lastKidMissRefreshAt >= $this->kidMissRefreshCooldownSeconds;
     }
 }

@@ -14,7 +14,8 @@ final class AtomicIdempotencyRecord
     public function __construct(
         public readonly string $status,
         public readonly ?string $fingerprint = null,
-        public readonly mixed $response = null
+        public readonly mixed $response = null,
+        public readonly ?string $reservationToken = null
     ) {
     }
 

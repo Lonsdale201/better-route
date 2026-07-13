@@ -132,6 +132,25 @@ final class WpMiddlewareAdaptersTest extends TestCase
         self::assertSame('user-1', $verifier->verify($token)['sub']);
     }
 
+    public function testHs256MaxLifetimeRequiresIssuedAt(): void
+    {
+        $now = 1700000000;
+        $token = $this->signHs256Token(
+            ['alg' => 'HS256', 'typ' => 'JWT'],
+            ['sub' => 'user-1', 'exp' => $now + 120],
+            'secret-123'
+        );
+        $verifier = new Hs256JwtVerifier(
+            'secret-123',
+            now: static fn (): int => $now,
+            maxLifetimeSeconds: 300
+        );
+
+        $this->expectException(\RuntimeException::class);
+        $this->expectExceptionMessage('iat and exp are required');
+        $verifier->verify($token);
+    }
+
     public function testErrorLogAuditLoggerWritesJsonEvent(): void
     {
         $lines = [];

@@ -42,7 +42,8 @@ final class RouterPipelineTest extends TestCase
                     $trace[] = 'route';
                     return $next($context);
                 },
-            ])->meta(['operationId' => 'adminPing']);
+            ])->meta(['operationId' => 'adminPing'])
+                ->publicRoute();
         });
 
         $dispatcher = new InMemoryDispatcher();
@@ -129,7 +130,7 @@ final class RouterPipelineTest extends TestCase
         self::assertFalse(($registration['permissionCallback'])());
     }
 
-    public function testWriteRoutesDenyByDefault(): void
+    public function testAllRoutesDenyByDefault(): void
     {
         $router = Router::make('better-route', 'v1');
         $router->post('/items', static fn (): array => ['ok' => true]);
@@ -139,6 +140,12 @@ final class RouterPipelineTest extends TestCase
         $registration = $dispatcher->registrations[0];
 
         self::assertFalse(($registration['permissionCallback'])());
+
+        $readRouter = Router::make('better-route', 'v1');
+        $readRouter->get('/items', static fn (): array => ['ok' => true]);
+        $readDispatcher = new InMemoryDispatcher();
+        $readRouter->register($readDispatcher);
+        self::assertFalse(($readDispatcher->registrations[0]['permissionCallback'])());
     }
 
     public function testWriteRoutesCanExplicitlyDeferProtectionToMiddleware(): void
@@ -170,7 +177,7 @@ final class RouterPipelineTest extends TestCase
         self::assertSame([], $registration['route']->meta['security']);
     }
 
-    public function testOptionsRoutesArePublicByDefault(): void
+    public function testOptionsRoutesMustBeExplicitlyPublic(): void
     {
         $router = Router::make('better-route', 'v1');
         $router->options('/items', static fn (): Response => new Response(null, 204));
@@ -180,7 +187,7 @@ final class RouterPipelineTest extends TestCase
         $registration = $dispatcher->registrations[0];
 
         self::assertSame('OPTIONS', $registration['route']->method);
-        self::assertTrue(($registration['permissionCallback'])());
+        self::assertFalse(($registration['permissionCallback'])());
     }
 
     public function testMiddlewareFactoryResolvesConstructorDependencies(): void
