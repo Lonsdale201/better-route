@@ -11,6 +11,7 @@ use BetterRoute\Http\Response;
 use BetterRoute\Middleware\MiddlewareInterface;
 use BetterRoute\Support\Canonicalizer;
 use BetterRoute\Support\RequestIdentity;
+use BetterRoute\Support\RequestRoute;
 use Throwable;
 
 final class AtomicIdempotencyMiddleware implements MiddlewareInterface
@@ -48,7 +49,7 @@ final class AtomicIdempotencyMiddleware implements MiddlewareInterface
         $this->methods = array_values(array_map(static fn (string $method): string => strtoupper($method), $methods));
 
         $this->keyResolver = $keyResolver ?? static fn (RequestContext $context, string $idempotencyKey): string => Canonicalizer::json([
-            'route' => $context->routePath,
+            'route' => RequestRoute::scope($context),
             'identity' => RequestIdentity::key($context),
             'key' => $idempotencyKey,
         ]);
@@ -193,7 +194,7 @@ final class AtomicIdempotencyMiddleware implements MiddlewareInterface
         }
 
         return sha1(Canonicalizer::json([
-            'route' => $context->routePath,
+            'route' => RequestRoute::scope($context),
             'method' => $method,
             'identity' => RequestIdentity::key($context),
             'params' => $params,

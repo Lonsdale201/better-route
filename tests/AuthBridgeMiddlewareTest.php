@@ -35,9 +35,12 @@ final class AuthBridgeMiddlewareTest extends TestCase
             'authorization' => 'Bearer token-a',
         ]));
 
-        $result = $middleware->handle($context, static fn (RequestContext $ctx): array => $ctx->attributes['auth']);
+        $result = $middleware->handle($context, static function (RequestContext $ctx) use (&$setUserId): array {
+            self::assertSame(7, $setUserId);
+            return $ctx->attributes['auth'];
+        });
 
-        self::assertSame(7, $setUserId);
+        self::assertSame(0, $setUserId);
         self::assertSame('jwt', $result['provider']);
         self::assertSame(7, $result['userId']);
     }
@@ -104,9 +107,12 @@ final class AuthBridgeMiddlewareTest extends TestCase
             'authorization' => $header,
         ]));
 
-        $result = $middleware->handle($context, static fn (RequestContext $ctx): array => $ctx->attributes['auth']);
+        $result = $middleware->handle($context, static function (RequestContext $ctx) use (&$setUserId): array {
+            self::assertSame(99, $setUserId);
+            return $ctx->attributes['auth'];
+        });
 
-        self::assertSame(99, $setUserId);
+        self::assertSame(0, $setUserId);
         self::assertSame('application_password', $result['provider']);
         self::assertSame(99, $result['userId']);
     }

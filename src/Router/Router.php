@@ -296,7 +296,7 @@ final class Router
             requestId: $this->resolveRequestId($request),
             routePath: $route->uri,
             request: $request,
-            attributes: ['routeMeta' => $route->meta]
+            attributes: ['routeMeta' => $route->meta, 'routeNamespace' => $this->baseNamespace()]
         );
 
         try {

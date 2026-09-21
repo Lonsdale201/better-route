@@ -19,14 +19,20 @@ final class ApplicationPasswordAuthMiddleware implements MiddlewareInterface
     /** @var callable(int): void */
     private $setCurrentUser;
 
+    /** @var null|callable(): int */
+    private $getCurrentUser;
+
     /**
      * @param null|callable(string, string, mixed): mixed $authenticate
      * @param null|callable(int): void $setCurrentUser
+     * @param null|callable(): int $getCurrentUser
      */
     public function __construct(
         ?callable $authenticate = null,
-        ?callable $setCurrentUser = null
+        ?callable $setCurrentUser = null,
+        ?callable $getCurrentUser = null
     ) {
+        $this->getCurrentUser = $getCurrentUser;
         $this->authenticate = $authenticate ?? static function (string $username, string $password, mixed $request): mixed {
             if (!function_exists('wp_authenticate_application_password')) {
                 return null;
@@ -56,15 +62,18 @@ final class ApplicationPasswordAuthMiddleware implements MiddlewareInterface
             throw new ApiException('Invalid application credentials.', 401, 'invalid_credentials');
         }
 
-        ($this->setCurrentUser)($userId);
-
         $identity = new AuthIdentity(
             provider: 'application_password',
             userId: $userId,
             user: $user
         );
 
-        return $next(AuthContext::withIdentity($context, $identity));
+        return WordPressUserScope::run(
+            $userId,
+            $this->setCurrentUser,
+            $this->getCurrentUser,
+            static fn (): mixed => $next(AuthContext::withIdentity($context, $identity))
+        );
     }
 
     /**

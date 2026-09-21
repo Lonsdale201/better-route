@@ -6,7 +6,7 @@ A thin PHP 8.1+ REST routing and resource library for WordPress.
 
 Built for headless and integration-heavy projects where you want a stable, versioned API contract on top of WP.
 
-Supports PHP 8.1+ and is tested against WordPress 6.9 stubs. WooCommerce support is optional and tested against WooCommerce 10.9 stubs. (The WordPress stub package is currently capped at 6.9 by the WooCommerce stubs' dependency constraint; the library targets current WordPress 7.0 / WooCommerce 10.9 and is verified against a live WP 7.0 / WC 10.9 HPOS install.)
+Supports PHP 8.1+. Static analysis uses WordPress 6.9 and WooCommerce 10.9 stubs. WooCommerce support is optional. The 1.1.1 regression smoke was verified on WordPress 7.1.1, WooCommerce 11.1.1 and PHP 8.3.30 in HPOS and CPT modes; this does not imply every intermediate runtime combination was tested.
 
 ## What It Gives You
 
@@ -486,9 +486,19 @@ composer cs-check
 
 ## Current Status
 
-Stable — 1.1.0. Available on Packagist: `composer require better-route/better-route:^1.1`.
+Stable line — 1.1. See [migration guidance](MIGRATING.md) before updating an existing deployment, especially one using idempotency or middleware-authenticated WordPress users.
 
 ## Changelog
+
+### 1.1.1 — 2026-09-21
+
+Bug fixes for existing APIs; no new Store API endpoints:
+
+- Separate cache and idempotency records by namespace, concrete route and URL captures, including requests whose merged query/body params mask a path ID. Identical retries still replay; changed payloads conflict.
+- Scope JWT/Bearer/Application Password native WP identity to the downstream pipeline and restore it on success or failure. Unmapped tokens cannot inherit an ambient user; replacing an identity clears stale derived context attributes.
+- Calculate Woo order items/taxes before staging status transitions, recalculate address-only updates, initialize gateway hooks and save before payment completion. Repeated `set_paid` updates do not repeat paid events.
+- Preserve fractional order quantities and inventory; reject writes that Woo's stock configuration would silently truncate. Align OpenAPI numeric quantity schemas.
+- Add regression tests and disposable CLI/HTTP smoke plugins. Document idempotency rollout/rollback coordination, authentication scope and earlier 1.1 security migration requirements in [MIGRATING.md](MIGRATING.md).
 
 ### 1.1.0 — 2026-07-13
 
