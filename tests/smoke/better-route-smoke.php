@@ -49,6 +49,7 @@ final class Smoke
     private array $users = [];
     private array $transients = [];
     private array $events = [];
+    private array $diagnostics = [];
     private string $table;
 
     public function run(string $mode): void
@@ -66,6 +67,9 @@ final class Smoke
         add_filter('pre_option_woocommerce_prices_include_tax', static fn () => 'no');
         add_filter('pre_option_woocommerce_tax_based_on', static fn () => 'billing');
         add_filter('pre_wp_mail', '__return_true');
+        add_action('doing_it_wrong_run', function ($function): void {
+            $this->diagnostics[] = $function;
+        });
         add_filter('pre_http_request', static fn () => new \WP_Error('smoke_no_egress', 'Smoke blocks outbound HTTP.'), PHP_INT_MAX);
         add_filter('woocommerce_find_rates', static function ($rates, $taxArgs) {
             if (($taxArgs['tax_class'] ?? '') !== '') {
@@ -112,6 +116,7 @@ final class Smoke
         if ($failure !== null) {
             WP_CLI::error($failure->getMessage());
         }
+        $this->same([], $this->diagnostics, 'no API misuse diagnostics');
         WP_CLI::success(wp_json_encode([
             'mode' => $mode, 'assertions' => $this->assertions, 'cleanup' => 'complete',
             'wp' => get_bloginfo('version'), 'woo' => WC_VERSION, 'php' => PHP_VERSION,
@@ -312,10 +317,13 @@ final class Smoke
         global $wpdb;
         // Recover only positively marked fixtures after partially completed work.
         // Never capture/delete every order produced by an integration's hooks.
-        $marked = wc_get_orders([
-            'limit' => -1, 'return' => 'ids',
-            'meta_query' => [['key' => 'better_route_smoke_run', 'value' => $this->run]],
-        ]);
+        $markerQuery = [['key' => 'better_route_smoke_run', 'value' => $this->run]];
+        $marked = \Automattic\WooCommerce\Utilities\OrderUtil::custom_orders_table_usage_is_enabled()
+            ? wc_get_orders(['limit' => -1, 'return' => 'ids', 'meta_query' => $markerQuery])
+            : get_posts([
+                'post_type' => 'shop_order', 'post_status' => 'any',
+                'numberposts' => -1, 'fields' => 'ids', 'meta_query' => $markerQuery,
+            ]);
         $this->orders = array_merge($this->orders, $marked);
         foreach (array_unique($this->orders) as $id) {
             $order = wc_get_order($id);
