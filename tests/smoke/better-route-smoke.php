@@ -82,10 +82,6 @@ final class Smoke
                 $this->events[] = [(float) $order->get_total(), (float) $fresh->get_total()];
             }
         }, 1, 2);
-        // Record every fixture, including orders created before a failed assertion.
-        add_action('woocommerce_new_order', function ($id): void {
-            $this->orders[] = (int) $id;
-        });
         $failure = null;
         try {
             $this->same($mode === 'hpos', \Automattic\WooCommerce\Utilities\OrderUtil::custom_orders_table_usage_is_enabled(), 'storage mode');
@@ -158,7 +154,12 @@ final class Smoke
             };
             $router = Router::make($this->run, 'auth');
             $auth = new BearerTokenAuthMiddleware($verifier, userMapper: $mapper);
-            $router->get('/me', static fn () => ['user' => get_current_user_id()])->protectedByMiddleware()->middleware([$auth]);
+            $router->get('/me', function (): \WP_REST_Response {
+                $response = new \WP_REST_Response(['user' => get_current_user_id()]);
+                $response->add_link('smoke', rest_url($this->run . '/auth/ambient'), ['embeddable' => true]);
+                return $response;
+            })->protectedByMiddleware()->middleware([$auth]);
+            $router->get('/ambient', static fn () => ['user' => get_current_user_id()])->publicRoute();
             $router->get('/throw', static function () {
                 throw new \RuntimeException('smoke');
             })->protectedByMiddleware()->middleware([$auth]);
@@ -210,6 +211,8 @@ final class Smoke
         $this->same($this->users[1], $response->get_data()['user'], 'mapped handler identity');
         $this->same($this->users[0], get_current_user_id(), 'restore caller');
         $this->same($this->users[0], $seen, 'after-callback identity');
+        $embedded = rest_get_server()->response_to_data($response, true);
+        $this->same($this->users[0], $embedded['_embedded']['smoke'][0]['user'], 'embedding uses restored caller');
         $response = $this->request('GET', '/' . $this->run . '/auth/throw');
         $this->same(500, $response->get_status(), 'throw normalized');
         $this->same($this->users[0], get_current_user_id(), 'restore after throw');
@@ -226,9 +229,11 @@ final class Smoke
         $product->set_tax_status('taxable');
         $product->set_tax_class('');
         $product->set_status('private');
+        $product->update_meta_data('_better_route_smoke_run', $this->run);
         $this->products[] = $product->save();
         $base = '/' . $this->run . '/woo/woo/orders';
-        $payload = ['billing' => ['country' => 'HU'], 'line_items' => [['product_id' => $product->get_id(), 'quantity' => 1]]];
+        $marker = ['better_route_smoke_run' => $this->run];
+        $payload = ['meta_data' => $marker, 'billing' => ['country' => 'HU'], 'line_items' => [['product_id' => $product->get_id(), 'quantity' => 1]]];
         $response = $this->request('POST', $base, $payload, 'order-create');
         $this->same(201, $response->get_status(), 'order create');
         $id = $response->get_data()['data']['id'];
@@ -246,7 +251,7 @@ final class Smoke
         $response = $this->request('PATCH', $base . '/' . $id, ['status' => 'processing', 'line_items' => [['product_id' => $product->get_id(), 'quantity' => 2]]], 'status-items');
         $this->same(200, $response->get_status(), 'status with items');
         $this->same([[238.0, 238.0]], $this->events, 'lifecycle sees final object and stored total');
-        $fractional = ['line_items' => [['product_id' => $product->get_id(), 'quantity' => 0.5]]];
+        $fractional = ['meta_data' => $marker, 'line_items' => [['product_id' => $product->get_id(), 'quantity' => 0.5]]];
         $response = $this->request('POST', $base, $fractional, 'fraction-rejected');
         $this->same(400, $response->get_status(), 'default integer store rejects fractional write');
         remove_filter('woocommerce_stock_amount', 'intval');
@@ -305,9 +310,19 @@ final class Smoke
     private function cleanup(): void
     {
         global $wpdb;
+        // Recover only positively marked fixtures after partially completed work.
+        // Never capture/delete every order produced by an integration's hooks.
+        $marked = wc_get_orders([
+            'limit' => -1, 'return' => 'ids',
+            'meta_query' => [['key' => 'better_route_smoke_run', 'value' => $this->run]],
+        ]);
+        $this->orders = array_merge($this->orders, $marked);
         foreach (array_unique($this->orders) as $id) {
             $order = wc_get_order($id);
             if ($order) {
+                if ($order->get_meta('better_route_smoke_run') !== $this->run) {
+                    throw new \RuntimeException('Unproven order ownership; refusing fixture deletion.');
+                }
                 $order->delete(true);
             }
             if (wc_get_order($id)) {
@@ -317,11 +332,18 @@ final class Smoke
         foreach ($this->products as $id) {
             $product = wc_get_product($id);
             if ($product) {
+                if ($product->get_meta('_better_route_smoke_run') !== $this->run) {
+                    throw new \RuntimeException('Unproven product ownership; refusing fixture deletion.');
+                }
                 $product->delete(true);
             }
         }
         require_once ABSPATH . 'wp-admin/includes/user.php';
         foreach ($this->users as $id) {
+            $user = get_userdata($id);
+            if (!$user || !str_starts_with($user->user_login, $this->run . '_')) {
+                throw new \RuntimeException('Unproven user ownership; refusing fixture deletion.');
+            }
             wp_delete_user($id);
         }
         foreach (array_unique($this->transients) as $key) {

@@ -47,10 +47,10 @@ def check(condition, label):
 
 
 check(request("POST", "better-route-smoke/v1/setup", authenticated=False)[0] == 404, "token gate")
-status, setup, _ = request("POST", "better-route-smoke/v1/setup")
-check(status == 200, f"setup HTTP {status}: {setup.get('code', setup.get('error', {}).get('code', 'unknown'))}")
-run = setup["run"]
 try:
+    status, setup, _ = request("POST", "better-route-smoke/v1/setup")
+    check(status == 200, f"setup HTTP {status}: {setup.get('code', setup.get('error', {}).get('code', 'unknown'))}")
+    run = setup["run"]
     for method in ("GET", "POST"):
         for version, item_id in (("v1", 1), ("v2", 1), ("v1", 2), ("v1", 1)):
             status, body, _ = request(method, f"{run}/{version}/items/{item_id}?id=2", "shared")
