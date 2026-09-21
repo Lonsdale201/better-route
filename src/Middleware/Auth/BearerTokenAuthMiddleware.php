@@ -14,9 +14,13 @@ final class BearerTokenAuthMiddleware implements MiddlewareInterface
     /** @var callable(int): void */
     private $setCurrentUser;
 
+    /** @var null|callable(): int */
+    private $getCurrentUser;
+
     /**
      * @param list<string> $requiredScopes
      * @param null|callable(int): void $setCurrentUser
+     * @param null|callable(): int $getCurrentUser
      */
     public function __construct(
         private readonly BearerTokenVerifierInterface $verifier,
@@ -24,8 +28,10 @@ final class BearerTokenAuthMiddleware implements MiddlewareInterface
         private readonly ?ClaimsUserMapperInterface $userMapper = null,
         ?callable $setCurrentUser = null,
         private readonly string $provider = 'bearer',
-        private readonly bool $allowGrantedScopeWildcards = false
+        private readonly bool $allowGrantedScopeWildcards = false,
+        ?callable $getCurrentUser = null
     ) {
+        $this->getCurrentUser = $getCurrentUser;
         $this->setCurrentUser = $setCurrentUser ?? static function (int $userId): void {
             if (function_exists('wp_set_current_user')) {
                 wp_set_current_user($userId);
@@ -58,10 +64,8 @@ final class BearerTokenAuthMiddleware implements MiddlewareInterface
         $userId = null;
         if ($this->userMapper !== null) {
             $userId = $this->userMapper->mapUserId($claims, $context);
-            if ($userId !== null && $userId > 0) {
-                ($this->setCurrentUser)($userId);
-            }
         }
+        $userId = $userId !== null && $userId > 0 ? $userId : null;
 
         $identity = new AuthIdentity(
             provider: $this->provider,
@@ -71,7 +75,12 @@ final class BearerTokenAuthMiddleware implements MiddlewareInterface
             scopes: $scopes
         );
 
-        return $next(AuthContext::withIdentity($context, $identity));
+        return WordPressUserScope::run(
+            $userId ?? 0,
+            $this->setCurrentUser,
+            $this->getCurrentUser,
+            static fn (): mixed => $next(AuthContext::withIdentity($context, $identity))
+        );
     }
 
     private function extractBearerToken(mixed $request): ?string

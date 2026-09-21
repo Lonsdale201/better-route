@@ -383,7 +383,7 @@ final class WooProductService
         }
 
         if (array_key_exists('stock_quantity', $payload)) {
-            $this->nullableInteger($payload['stock_quantity'], 'stock_quantity');
+            $this->nullableStockQuantity($payload['stock_quantity'], 'stock_quantity');
         }
 
         foreach (['manage_stock', 'virtual', 'downloadable'] as $field) {
@@ -447,7 +447,7 @@ final class WooProductService
         }
 
         if (array_key_exists('stock_quantity', $payload) && method_exists($product, 'set_stock_quantity')) {
-            $product->set_stock_quantity($this->nullableInteger(
+            $product->set_stock_quantity($this->nullableStockQuantity(
                 $payload['stock_quantity'],
                 'stock_quantity'
             ));
@@ -495,21 +495,13 @@ final class WooProductService
         throw $this->validationError([$field => ['must be boolean']]);
     }
 
-    private function nullableInteger(mixed $value, string $field): ?int
+    private function nullableStockQuantity(mixed $value, string $field): int|float|null
     {
         if ($value === null) {
             return null;
         }
 
-        if (is_int($value)) {
-            return $value;
-        }
-
-        if (is_string($value) && preg_match('/^-?\d+$/D', $value) === 1) {
-            return (int) $value;
-        }
-
-        throw $this->validationError([$field => ['must be an integer or null']]);
+        return StockQuantity::parse($value, $field);
     }
 
     private function mapSortField(string $field): string

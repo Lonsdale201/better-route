@@ -5,3 +5,4 @@
 composer.lock
 *.md
 !README.md
+!MIGRATING.md

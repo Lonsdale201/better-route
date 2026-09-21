@@ -9,6 +9,7 @@ use BetterRoute\Http\RequestContext;
 use BetterRoute\Middleware\Auth\AuthContext;
 use BetterRoute\Middleware\Auth\AuthIdentity;
 use BetterRoute\Middleware\Auth\ClaimsUserMapperInterface;
+use BetterRoute\Middleware\Auth\WordPressUserScope;
 use BetterRoute\Middleware\MiddlewareInterface;
 use Throwable;
 
@@ -17,17 +18,23 @@ final class JwtAuthMiddleware implements MiddlewareInterface
     /** @var callable(int): void */
     private $setCurrentUser;
 
+    /** @var null|callable(): int */
+    private $getCurrentUser;
+
     /**
      * @param list<string> $requiredScopes
      * @param null|callable(int): void $setCurrentUser
+     * @param null|callable(): int $getCurrentUser
      */
     public function __construct(
         private readonly JwtVerifierInterface $verifier,
         private readonly array $requiredScopes = [],
         private readonly ?ClaimsUserMapperInterface $userMapper = null,
         ?callable $setCurrentUser = null,
-        private readonly bool $allowGrantedScopeWildcards = false
+        private readonly bool $allowGrantedScopeWildcards = false,
+        ?callable $getCurrentUser = null
     ) {
+        $this->getCurrentUser = $getCurrentUser;
         $this->setCurrentUser = $setCurrentUser ?? static function (int $userId): void {
             if (function_exists('wp_set_current_user')) {
                 wp_set_current_user($userId);
@@ -60,10 +67,8 @@ final class JwtAuthMiddleware implements MiddlewareInterface
         $userId = null;
         if ($this->userMapper !== null) {
             $userId = $this->userMapper->mapUserId($claims, $context);
-            if ($userId !== null && $userId > 0) {
-                ($this->setCurrentUser)($userId);
-            }
         }
+        $userId = $userId !== null && $userId > 0 ? $userId : null;
 
         $identity = new AuthIdentity(
             provider: 'jwt',
@@ -73,7 +78,12 @@ final class JwtAuthMiddleware implements MiddlewareInterface
             scopes: $scopes
         );
 
-        return $next(AuthContext::withIdentity($context, $identity));
+        return WordPressUserScope::run(
+            $userId ?? 0,
+            $this->setCurrentUser,
+            $this->getCurrentUser,
+            static fn (): mixed => $next(AuthContext::withIdentity($context, $identity))
+        );
     }
 
     private function extractBearerToken(mixed $request): ?string

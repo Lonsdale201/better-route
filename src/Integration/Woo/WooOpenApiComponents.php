@@ -46,7 +46,7 @@ final class WooOpenApiComponents
                     'properties' => [
                         'product_id' => ['type' => 'integer'],
                         'variation_id' => ['type' => 'integer'],
-                        'quantity' => ['type' => 'integer'],
+                        'quantity' => ['type' => 'number', 'exclusiveMinimum' => 0],
                         'total' => ['type' => 'string'],
                         'subtotal' => ['type' => 'string'],
                         'meta_data' => [
@@ -63,7 +63,7 @@ final class WooOpenApiComponents
                         'name' => ['type' => 'string'],
                         'product_id' => ['type' => 'integer'],
                         'variation_id' => ['type' => 'integer'],
-                        'quantity' => ['type' => 'integer'],
+                        'quantity' => ['type' => 'number'],
                         'total' => ['type' => 'string'],
                         'subtotal' => ['type' => 'string'],
                         'meta_data' => [
@@ -168,7 +168,7 @@ final class WooOpenApiComponents
                         'description' => ['type' => 'string'],
                         'short_description' => ['type' => 'string'],
                         'stock_status' => ['type' => 'string'],
-                        'stock_quantity' => ['type' => ['integer', 'null']],
+                        'stock_quantity' => ['type' => ['number', 'null']],
                         'manage_stock' => ['type' => 'boolean'],
                         'virtual' => ['type' => 'boolean'],
                         'downloadable' => ['type' => 'boolean'],
@@ -197,7 +197,7 @@ final class WooOpenApiComponents
                         'description' => ['type' => 'string'],
                         'short_description' => ['type' => 'string'],
                         'stock_status' => ['type' => 'string'],
-                        'stock_quantity' => ['type' => ['integer', 'null']],
+                        'stock_quantity' => ['type' => ['number', 'null']],
                         'manage_stock' => ['type' => 'boolean'],
                         'virtual' => ['type' => 'boolean'],
                         'downloadable' => ['type' => 'boolean'],

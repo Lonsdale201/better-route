@@ -17,22 +17,11 @@ final class AuthContext
             'scopes' => $identity->scopes,
         ]);
 
-        if ($identity->claims !== []) {
-            $next = $next->withAttribute('claims', $identity->claims);
-        }
-
-        if ($identity->scopes !== []) {
-            $next = $next->withAttribute('scopes', $identity->scopes);
-        }
-
-        if ($identity->userId !== null) {
-            $next = $next->withAttribute('userId', $identity->userId);
-        }
-
-        if ($identity->user !== null) {
-            $next = $next->withAttribute('user', $identity->user);
-        }
-
-        return $next;
+        // Replacing an identity must not retain claims or a user from an outer
+        // authentication middleware when the new identity has no WP mapping.
+        return $next->withAttribute('claims', $identity->claims)
+            ->withAttribute('scopes', $identity->scopes)
+            ->withAttribute('userId', $identity->userId)
+            ->withAttribute('user', $identity->user);
     }
 }

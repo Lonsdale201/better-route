@@ -9,6 +9,7 @@ use BetterRoute\Http\Response;
 use BetterRoute\Middleware\MiddlewareInterface;
 use BetterRoute\Support\Canonicalizer;
 use BetterRoute\Support\RequestIdentity;
+use BetterRoute\Support\RequestRoute;
 
 /**
  * Identity-aware GET response cache.
@@ -94,7 +95,7 @@ final class CachingMiddleware implements MiddlewareInterface
         }
 
         return sha1(Canonicalizer::json([
-            'route' => $context->routePath,
+            'route' => RequestRoute::scope($context),
             'identity' => RequestIdentity::key($context),
             'params' => $params,
         ]));

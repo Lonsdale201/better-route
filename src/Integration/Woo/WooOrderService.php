@@ -192,6 +192,7 @@ final class WooOrderService
         $this->assertWooFunctions();
         $this->assertPayloadKeys($payload);
         $this->validatePayload($payload, true, null);
+        $this->initializePaymentGateways();
 
         $order = $this->transactional(function () use ($payload): object {
             $order = wc_create_order();
@@ -226,6 +227,7 @@ final class WooOrderService
 
         $this->assertPayloadKeys($payload);
         $this->validatePayload($payload, false, $order);
+        $this->initializePaymentGateways();
         $this->transactional(function () use ($order, $payload): void {
             $this->persistPayload($order, $payload, false);
         });
@@ -242,6 +244,13 @@ final class WooOrderService
             $this->applyPayload($order, $payload, $isCreate);
             if (method_exists($order, 'save')) {
                 $order->save();
+            }
+            if (
+                ($payload['set_paid'] ?? false) === true
+                && method_exists($order, 'payment_complete')
+                && ($isCreate || (method_exists($order, 'needs_payment') && $order->needs_payment()))
+            ) {
+                $order->payment_complete();
             }
         } catch (\WC_Data_Exception $exception) {
             // WooCommerce CRUD setters signal invalid input via WC_Data_Exception;
@@ -275,6 +284,13 @@ final class WooOrderService
         } catch (Throwable $throwable) {
             wc_transaction_query('rollback');
             throw $throwable;
+        }
+    }
+
+    private function initializePaymentGateways(): void
+    {
+        if (function_exists('WC')) {
+            WC()->payment_gateways();
         }
     }
 
@@ -330,10 +346,6 @@ final class WooOrderService
      */
     private function applyPayload(object $order, array $payload, bool $isCreate): void
     {
-        if (array_key_exists('status', $payload) && method_exists($order, 'set_status')) {
-            $order->set_status((string) $payload['status']);
-        }
-
         if (array_key_exists('customer_id', $payload) && method_exists($order, 'set_customer_id')) {
             $customerId = is_numeric($payload['customer_id']) ? (int) $payload['customer_id'] : 0;
             if ($customerId < 0) {
@@ -374,14 +386,19 @@ final class WooOrderService
 
         if (array_key_exists('line_items', $payload)) {
             $this->applyLineItems($order, $payload['line_items'], !$isCreate);
-
-            if (method_exists($order, 'calculate_totals')) {
-                $order->calculate_totals(true);
-            }
         }
 
-        if (($payload['set_paid'] ?? false) === true && method_exists($order, 'payment_complete')) {
-            $order->payment_complete();
+        if (
+            (array_key_exists('line_items', $payload) || array_key_exists('billing', $payload) || array_key_exists('shipping', $payload))
+            && method_exists($order, 'calculate_totals')
+        ) {
+            $order->calculate_totals(true);
+        }
+
+        // calculate_totals() can save while calculating taxes. Stage the status
+        // only after totals are final so lifecycle hooks see the final amounts.
+        if (array_key_exists('status', $payload) && method_exists($order, 'set_status')) {
+            $order->set_status((string) $payload['status']);
         }
     }
 
@@ -508,12 +525,9 @@ final class WooOrderService
                 throw $this->validationError(['line_items.' . $index . '.product_id' => ['product not found']]);
             }
 
-            $quantity = isset($itemData['quantity']) && is_numeric($itemData['quantity'])
-                ? (int) $itemData['quantity']
+            $quantity = array_key_exists('quantity', $itemData)
+                ? StockQuantity::parse($itemData['quantity'], 'line_items.' . $index . '.quantity', true)
                 : 1;
-            if ($quantity < 1) {
-                throw $this->validationError(['line_items.' . $index . '.quantity' => ['must be greater than 0']]);
-            }
 
             // For a variation, add the actual variation product so add_product()
             // derives price, name, tax class and attributes from the variation —
@@ -647,7 +661,7 @@ final class WooOrderService
             }
 
             if (array_key_exists('quantity', $itemData)) {
-                $this->positiveInt($itemData['quantity'], $prefix . '.quantity');
+                StockQuantity::parse($itemData['quantity'], $prefix . '.quantity', true);
             }
 
             if (array_key_exists('variation_id', $itemData)) {
@@ -762,7 +776,7 @@ final class WooOrderService
                 'product_id' => method_exists($item, 'get_product_id') ? (int) $item->get_product_id() : 0,
                 'variation_id' => method_exists($item, 'get_variation_id') ? (int) $item->get_variation_id() : 0,
                 'name' => method_exists($item, 'get_name') ? (string) $item->get_name() : '',
-                'quantity' => method_exists($item, 'get_quantity') ? (int) $item->get_quantity() : 0,
+                'quantity' => method_exists($item, 'get_quantity') ? $item->get_quantity() + 0 : 0,
                 'subtotal' => method_exists($item, 'get_subtotal') ? (string) $item->get_subtotal() : '0',
                 'total' => method_exists($item, 'get_total') ? (string) $item->get_total() : '0',
                 'meta_data' => method_exists($item, 'get_meta_data') ? MetaDataHelper::serialize($item->get_meta_data()) : [],
