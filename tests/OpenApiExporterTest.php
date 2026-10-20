@@ -160,6 +160,7 @@ final class OpenApiExporterTest extends TestCase
             'globalSecurity' => [
                 ['bearerAuth' => []],
             ],
+            'securitySchemes' => ['bearerAuth' => ['type' => 'http', 'scheme' => 'bearer']],
         ]);
 
         self::assertSame([['bearerAuth' => []]], $document['security']);

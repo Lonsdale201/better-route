@@ -105,6 +105,13 @@ jobs:
           tools: composer:v2, wp-cli
       - name: Install library dependencies
         run: composer install --no-interaction --prefer-dist --no-progress
+      - uses: actions/setup-python@v5
+        with:
+          python-version: '3.13'
+      - name: Install OpenAPI test validator and export contracts
+        run: |
+          python -m pip install -r tests/openapi/requirements.txt
+          php tests/openapi/export.php "$RUNNER_TEMP/better-route-openapi.json"
       - name: Install disposable WordPress and WooCommerce
         run: |
           wp core download --path="$WP_PATH" --version=6.9.4
@@ -116,6 +123,30 @@ jobs:
           for mode in yes no; do
             wp option update woocommerce_custom_orders_table_enabled "$mode" --path="$WP_PATH"
             wp eval 'WC_Install::create_tables();' --path="$WP_PATH"
+            export BR_OPENAPI_SAMPLE_DIR="$RUNNER_TEMP/better-route-openapi-samples"
             wp eval "require '$GITHUB_WORKSPACE/tests/smoke/woo-services-smoke.php';" --path="$WP_PATH"
             wp eval "require '$GITHUB_WORKSPACE/tests/smoke/woo-analytics-smoke.php';" --path="$WP_PATH"
+            python tests/openapi/validate.py "$RUNNER_TEMP/better-route-openapi.json" "$BR_OPENAPI_SAMPLE_DIR/services.json" "$BR_OPENAPI_SAMPLE_DIR/analytics.json"
           done
+
+  openapi:
+    name: OpenAPI 3.1 contracts
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          persist-credentials: false
+      - uses: shivammathur/setup-php@v2
+        with:
+          php-version: '8.1'
+          coverage: none
+          tools: composer:v2
+      - uses: actions/setup-python@v5
+        with:
+          python-version: '3.13'
+      - run: composer install --no-interaction --prefer-dist --no-progress
+      - run: python -m pip install -r tests/openapi/requirements.txt
+      - name: Validate serialized documents and positive/negative samples
+        run: |
+          php tests/openapi/export.php "$RUNNER_TEMP/better-route-openapi.json"
+          python tests/openapi/validate.py "$RUNNER_TEMP/better-route-openapi.json"

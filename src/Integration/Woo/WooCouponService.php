@@ -128,7 +128,9 @@ final class WooCouponService
     public function list(CouponListQuery $query): array
     {
         $this->assertWooFunctions();
-        $query = (new CouponListQueryParser($this->allowedFields(), maxPerPage: 1000))->parse([
+        // The HTTP parser owns its configured ceiling; trusted DTO callers own
+        // their page size. Revalidate values without imposing a hidden second ceiling.
+        $query = (new CouponListQueryParser($this->allowedFields(), maxPerPage: max(1, $query->perPage)))->parse([
             'fields' => implode(',', $query->fields), 'code' => $query->code, 'search' => $query->search,
             'sort' => ($query->sortDirection === 'DESC' ? '-' : '') . $query->sortField,
             'page' => $query->page, 'per_page' => $query->perPage, 'state' => $query->state,
@@ -328,7 +330,7 @@ final class WooCouponService
             $this->parseStringArray($payload['email_restrictions'], 'email_restrictions');
         }
         if (array_key_exists('meta_data', $payload)) {
-            MetaDataHelper::normalizeIncoming($payload['meta_data']);
+            MetaDataHelper::normalizeCouponIncoming($payload['meta_data']);
         }
     }
 
@@ -504,7 +506,7 @@ final class WooCouponService
         }
 
         if (array_key_exists('meta_data', $payload)) {
-            $metaData = MetaDataHelper::normalizeIncoming($payload['meta_data']);
+            $metaData = MetaDataHelper::normalizeCouponIncoming($payload['meta_data']);
             MetaDataHelper::applyToTarget($coupon, $metaData);
         }
     }

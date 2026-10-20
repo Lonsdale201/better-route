@@ -286,10 +286,17 @@ WordPress configuration. Neither silently falls back to a racy read/modify/write
 export or replace them with a persistent backend for cross-request totals. Audit and
 metric sink failures are best-effort and never change the API response.
 
-## OpenAPI (MVP)
+## OpenAPI 3.1
 
-The library already stores route/resource metadata for OpenAPI.  
-You can export a document from contracts and optionally expose it as a REST endpoint.
+Export route/resource contracts as OpenAPI 3.1 JSON and optionally expose the document
+as a protected REST endpoint. CI validates serialized documents and representative DTOs,
+including native WooCommerce responses, against their schemas. The runtime library
+keeps its PHP 8.1 minimum and has no validator dependency.
+
+Applications supply custom handler schemas and actual authentication schemes. Named
+WordPress captures (including balanced nested groups) become path parameters; regex
+outside captures that cannot be represented as literal OpenAPI paths is rejected.
+Exclude such routes with `meta.openapi.include = false`.
 
 ### Manual export from contracts
 
@@ -381,6 +388,51 @@ explicit `meta.parameters` entries override derived entries with the same name a
 location. Resource create/update responses are `{ "data": ... }` envelopes, so
 strict component sets should provide `<Resource>Response` in addition to
 `<Resource>`, `<Resource>Input`, and `<Resource>ListResponse`.
+
+Use `strictSchemas => true` before release. It checks local JSON-pointer references,
+including nested schemas and reusable components. Compatibility mode (the default)
+still inserts placeholders for missing direct schema-component references; it does
+not establish that application schemas are complete. External references and JSON
+Schema anchors are not fetched/resolved by the runtime checks. Validate the final
+application document with a full OpenAPI 3.1 validator as well.
+
+Duplicate method/path pairs, equivalent templated paths, duplicate operation IDs,
+malformed security requirements and undefined security schemes fail explicitly.
+PUT retains its `...Update` ID; PATCH has a separate `...Patch` ID. Multiple Woo
+registrations can set `operationIdPrefix` to keep generated client method names unique.
+Explicit parameter metadata preserves `style` and `explode`. Query/path/cookie names
+remain case-sensitive; header names are merged case-insensitively. Summary,
+description and deprecated metadata are emitted as standard operation fields.
+
+`security: []` documents a public operation; omission inherits the document default.
+`[{}]` allows an anonymous alternative. These are documentation settings:
+`protectedByMiddleware()` still requires authentication and authorization middleware.
+The OpenAPI endpoint defaults to `manage_options`; publishing it publicly also
+publishes included application metadata.
+
+### Analytics contracts
+
+Analytics endpoints remain explicitly registered by the application. Attach the
+report-specific helper to document supported parameters and bounded response DTOs:
+
+```php
+use BetterRoute\Integration\Woo\WooAnalyticsOpenApi;
+use BetterRoute\Integration\Woo\WooAnalyticsService;
+
+$analytics = new WooAnalyticsService();
+$router->get('/analytics/orders/stats', fn ($request) => $analytics->report('orders/stats', $request))
+    ->args(WooAnalyticsOpenApi::args('orders/stats'))
+    ->meta(WooAnalyticsOpenApi::meta('orders/stats'))
+    ->permission(fn () => current_user_can('view_woocommerce_reports'));
+```
+
+Merge `BetterRoute::wooOpenApiComponents()` into export options; it includes all 12
+report schemas. Describe the application's real authentication scheme separately.
+Responses are `{report, data, meta, comparison?}` without an extra envelope. Money
+uses decimal strings, averages can be fractional, empty metric maps serialize as
+`{}`, and comparisons do not recursively contain comparisons. Date parameters accept
+shop-local datetimes with optional offsets, so their schemas use a pattern rather
+than incorrectly requiring RFC3339 offsets.
 
 ## WooCommerce HPOS Integration (Optional)
 
@@ -572,6 +624,11 @@ unavailable native reports produce sanitized 503 errors; permissions produce 403
 
 ## Error Contract
 
+Better Route handler errors use the envelope below. WordPress may reject authentication,
+permissions or native argument validation before the handler runs; these responses
+retain its `{code, message, data}` shape. The OpenAPI `ErrorResponse` accepts both.
+HTTP HEAD and inline 204/304 responses have no documented response body.
+
 ```json
 {
   "error": {
@@ -593,10 +650,17 @@ unavailable native reports produce sanitized 503 errors; permissions produce 403
 composer test
 composer analyse
 composer cs-check
+php tests/openapi/export.php /tmp/better-route-openapi.json
+python -m pip install -r tests/openapi/requirements.txt
+python tests/openapi/validate.py /tmp/better-route-openapi.json
 ```
 
 The CI workflow also installs disposable WordPress 6.9.4 / WooCommerce 10.9.4 and runs
 the service/Analytics smoke suites on PHP 8.1 and 8.3, with HPOS and CPT storage.
+Both runtime jobs validate synthetic native responses against the exported schemas.
+`BR_OPENAPI_SAMPLE_DIR` optionally captures smoke-only samples outside the webroot;
+use it exclusively with disposable synthetic data. A separate OpenAPI job validates
+empty exports, CPT/table CRUD, authentication contracts and positive/negative inputs.
 To reproduce on a **disposable database only**, install/activate WooCommerce, set
 the desired storage option, run `WC_Install::create_tables()`, then execute:
 

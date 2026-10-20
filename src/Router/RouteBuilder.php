@@ -63,11 +63,7 @@ final class RouteBuilder
     public function protectedByMiddleware(array|string|null $security = null): self
     {
         $this->permission(static fn (): bool => true);
-        $this->meta(['protectedByMiddleware' => true]);
-
-        if ($security !== null) {
-            $this->meta(['security' => $security]);
-        }
+        $this->meta(['protectedByMiddleware' => true, 'security' => $security]);
 
         return $this;
     }

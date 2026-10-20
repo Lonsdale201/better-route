@@ -8,6 +8,29 @@ use BetterRoute\Http\ApiException;
 
 final class MetaDataHelper
 {
+    /** @return list<array{key: string, value: mixed}> */
+    public static function normalizeCouponIncoming(mixed $metaData): array
+    {
+        $entries = self::normalizeIncoming($metaData);
+        // WC_Data::update_meta_data dispatches these internal keys to setters.
+        // In particular, usage_count must remain read-only even through meta_data.
+        $internal = [
+            'discount_type', 'coupon_amount', 'expiry_date', 'date_expires', 'usage_count',
+            'individual_use', 'product_ids', 'exclude_product_ids', 'usage_limit',
+            'usage_limit_per_user', 'limit_usage_to_x_items', 'free_shipping',
+            'product_categories', 'exclude_product_categories', 'exclude_sale_items',
+            'minimum_amount', 'maximum_amount', 'customer_email',
+        ];
+        foreach ($entries as $index => $entry) {
+            if (in_array(strtolower(trim($entry['key'])), $internal, true)) {
+                throw new ApiException('Invalid request.', 400, 'validation_failed', [
+                    'fieldErrors' => ['meta_data.' . $index . '.key' => ['use the dedicated coupon field; internal coupon meta is not writable']],
+                ]);
+            }
+        }
+        return $entries;
+    }
+
     /**
      * @return list<array{key: string, value: mixed}>
      */

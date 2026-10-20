@@ -29,6 +29,7 @@ if (!defined('WP_CLI') || !WP_CLI || !class_exists('WC_Order')) {
     throw new RuntimeException('Requires disposable WP-CLI + WooCommerce.');
 }
 require_once dirname(__DIR__, 2) . '/vendor/autoload.php';
+require_once __DIR__ . '/OpenApiSamples.php';
 require_once ABSPATH . 'wp-admin/includes/user.php';
 $prefix = 'branalytics_' . bin2hex(random_bytes(5));
 $originalUser = get_current_user_id();
@@ -62,6 +63,7 @@ $denied = static function (callable $operation, int $status, string $code) use (
     throw new RuntimeException('Expected ' . $code);
 };
 $failure = null;
+$samples = [];
 try {
     foreach (['administrator', 'subscriber', 'customer'] as $index => $role) {
         $id = wp_insert_user(['user_login' => $prefix . $index, 'user_email' => $prefix . $index . '@example.invalid', 'user_pass' => wp_generate_password(), 'role' => $role]);
@@ -120,6 +122,8 @@ try {
             continue;
         }
         $data = $service->report($report, $window);
+        $schema = substr(\BetterRoute\Integration\Woo\WooAnalyticsOpenApi::meta($report)['responseSchema'], strlen('#/components/schemas/'));
+        $samples[] = ['schema' => $schema, 'value' => $data];
         $check($data['report'] === $report, 'Report available: ' . $report);
         $check(!isset($data['data']['_links']), 'Links omitted');
     }
@@ -131,6 +135,7 @@ try {
     $check(isset($couponRows[$coupon->get_id()]), 'Actual coupon lookup');
     $check((float) $couponRows[$coupon->get_id()]['amount'] === 2.0, 'Native coupon amount');
     $compare = $service->report('orders/stats', array_merge($window, ['compare_after' => $window['after'], 'compare_before' => $window['before']]));
+    $samples[] = ['schema' => 'WooAnalyticsOrdersStatsResponse', 'value' => $compare];
     $check($compare['data']['totals'] === $compare['comparison']['data']['totals'], 'Comparison same bounds and DTO');
     $denied(static fn () => $service->report('../users', []), 400, 'validation_failed');
     $denied(static fn () => $service->report('orders/stats', ['_fields' => 'secret']), 400, 'validation_failed');
@@ -176,6 +181,8 @@ try {
     }
     wp_set_current_user($admin);
     $check($service->report('stock')['report'] === 'stock', 'Stock report uses native extra permissions');
+    $samples[] = ['schema' => 'WooAnalyticsStockResponse', 'value' => $service->report('stock')];
+    \BetterRouteSmoke\writeOpenApiSamples('analytics', $samples);
     wp_set_current_user($customer);
     $denied(static fn () => $service->report('orders/stats', $window), 403, 'forbidden');
     WP_CLI::log('PASS Analytics: native lookup data, all report paths, reports-only viewer, comparison, readiness, DTOs, user isolation');

@@ -25,6 +25,7 @@ if (!defined('WP_CLI') || !WP_CLI || !class_exists(WC_Coupon::class)) {
     throw new RuntimeException('Requires disposable WP-CLI + WooCommerce.');
 }
 require_once dirname(__DIR__, 2) . '/vendor/autoload.php';
+require_once __DIR__ . '/OpenApiSamples.php';
 require_once ABSPATH . 'wp-admin/includes/user.php';
 $prefix = 'brwoo_' . bin2hex(random_bytes(5)) . '_';
 $originalUser = get_current_user_id();
@@ -227,6 +228,43 @@ try {
     $same('opt-in', $metadata['br_public_note'] ?? null, 'Explicit coupon metadata');
     $check(!array_key_exists('_br_secret', $metadata), 'Protected coupon metadata excluded');
     $denied(static fn () => $coupons->update($missing, ['state' => 'active'], ['id']), 400);
+    $usageBefore = (new WC_Coupon($soon))->get_usage_count('edit');
+    foreach ([['usage_count' => 999], [['key' => 'usage_count', 'value' => 999]], ['coupon_amount' => 999]] as $meta) {
+        $denied(static fn () => $coupons->update($soon, ['meta_data' => $meta], ['id']), 400);
+        $same($usageBefore, (new WC_Coupon($soon))->get_usage_count('edit'), 'Internal metadata cannot invoke coupon setter');
+    }
+    $coupons->update($soon, ['meta_data' => ['br_custom_note' => 'allowed']], ['id']);
+    $same('allowed', (new WC_Coupon($soon))->get_meta('br_custom_note'), 'Public custom coupon metadata remains writable');
+    do_action('rest_api_init');
+    (new \BetterRoute\Integration\Woo\WooRouteRegistrar())->register('br-schema/v1', [
+        'requireHpos' => false, 'defaultPerPage' => 1500, 'maxPerPage' => 2000,
+    ]);
+    $native = static function (string $path, array $params = []): \WP_REST_Response {
+        $request = new \WP_REST_Request('GET', '/br-schema/v1/woo/' . $path);
+        $request->set_query_params($params);
+        return rest_do_request($request);
+    };
+    $samples = [];
+    foreach (['customers' => 'WooCustomer', 'coupons' => 'WooCoupon', 'orders' => 'WooOrder', 'products' => 'WooProduct'] as $resource => $schema) {
+        $response = $native($resource);
+        $same(200, $response->get_status(), 'Native ' . $resource . ' with configured pagination above 1000');
+        $samples[] = ['schema' => $schema . 'ListResponse', 'value' => $response->get_data()];
+    }
+    foreach (['customers' => [$a, 'WooCustomerResponse'], 'coupons' => [$soon, 'WooCouponResponse'], 'orders' => [$order->get_id(), 'WooOrderResponse']] as $resource => [$id, $schema]) {
+        $response = $native($resource . '/' . $id);
+        $same(200, $response->get_status(), 'Native detail ' . $resource);
+        $samples[] = ['schema' => $schema, 'value' => $response->get_data()];
+    }
+    foreach (['customers', 'coupons'] as $resource) {
+        $same($native($resource)->get_data(), $native($resource, ['sort' => ''])->get_data(), 'Empty sort preserves fallback');
+    }
+    $same($native('coupons')->get_data(), $native('coupons', ['state' => '', 'status' => ''])->get_data(), 'Empty state/status preserve fallback');
+    foreach ([['sort' => 'invalid'], ['per_page' => 2001]] as $invalid) {
+        $response = $native('coupons', $invalid);
+        $same(400, $response->get_status(), 'Native validation error');
+        $samples[] = ['response' => 'ErrorResponse', 'value' => $response->get_data()];
+    }
+    \BetterRouteSmoke\writeOpenApiSamples('services', $samples);
     $fixed = static function (int $id, string $state, int $clock) use ($couponParser): array {
         $dto = $couponParser->parse(['state' => $state]);
         $q = new WP_Query();

@@ -6,6 +6,24 @@ own response schemas and permissions as changes to your application's API contra
 
 ## After 1.1.1 (unreleased)
 
+- OpenAPI remains PHP 8.1-compatible and now validates generated documents in CI.
+  PATCH operation IDs change from `...Update` to `...Patch` to distinguish them from
+  PUT. Regenerate clients if they consumed the previous duplicate IDs. Multiple Woo
+  registrations can supply `operationIdPrefix`.
+- Duplicate operations/IDs, equivalent path templates, malformed security and
+  undefined security schemes now raise configuration errors. Use strict schemas
+  before release, provide referenced components and exclude unsupported PCRE paths.
+  Runtime checks do not fetch external schema references or replace full validation.
+- Customer updates have a separate input schema without username. Metadata inputs
+  document list/map/null forms; coupon schemas allow registered custom discount types
+  and native date clearing. `ErrorResponse` describes native WordPress errors too.
+- Coupon internal metadata keys are rejected, preventing `meta_data.usage_count`
+  and other internal keys from invoking native setters. Use supported top-level
+  fields; usage counts remain read-only. Public custom metadata remains writable.
+- Empty Analytics metric maps serialize as JSON objects instead of arrays. Attach
+  `WooAnalyticsOpenApi::args()` and `::meta()` to manually registered report routes;
+  helper schemas are included in `wooOpenApiComponents()`.
+
 - Customer routes still default to the `customer` role, with stronger exclusion of
   privileged multi-role accounts, direct administrative capabilities and super
   administrators. Those objects can now return 404 where older code returned them.

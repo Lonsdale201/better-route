@@ -58,9 +58,9 @@ final class AnalyticsResponseMapper
     /**
      * @param array<string, mixed> $row
      * @param array<string, string> $fields
-     * @return array<string, mixed>
+     * @return array<string, mixed>|\stdClass
      */
-    private function metrics(array $row, array $fields, bool $segments = true): array
+    private function metrics(array $row, array $fields, bool $segments = true): array|\stdClass
     {
         $result = [];
         foreach ($fields as $key => $type) {
@@ -96,7 +96,7 @@ final class AnalyticsResponseMapper
                 ];
             }
         }
-        return $result;
+        return $result !== [] ? $result : (object) [];
     }
 
     /**
