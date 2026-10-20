@@ -18,6 +18,7 @@ final class CorsMiddleware implements MiddlewareInterface, WordPressRouteMiddlew
     ) {
     }
 
+    #[\Override]
     public function handle(RequestContext $context, callable $next): mixed
     {
         $origin = $this->header($context->request, 'origin');
@@ -35,6 +36,7 @@ final class CorsMiddleware implements MiddlewareInterface, WordPressRouteMiddlew
         return $this->withHeaders($response, $headers);
     }
 
+    #[\Override]
     public function registerWordPressRoute(string $namespace, string $route): void
     {
         WordPressCorsBridge::register($namespace, $route, $this);

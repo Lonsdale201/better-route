@@ -4,7 +4,7 @@ declare(strict_types=1);
 
 namespace BetterRoute\Integration\Woo;
 
-final class AnalyticsQuery
+final readonly class AnalyticsQuery
 {
     /**
      * @param array<string, mixed> $params

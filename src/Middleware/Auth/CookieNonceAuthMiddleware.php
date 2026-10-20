@@ -34,7 +34,7 @@ final class CookieNonceAuthMiddleware implements MiddlewareInterface
     ) {
         $this->isLoggedIn = $isLoggedIn ?? static fn (): bool => function_exists('is_user_logged_in') ? (bool) is_user_logged_in() : false;
 
-        $this->verifyNonce = $verifyNonce ?? static function (string $nonce, string $action): bool {
+        $this->verifyNonce = $verifyNonce ?? static function (#[\SensitiveParameter] string $nonce, string $action): bool {
             if (!function_exists('wp_verify_nonce')) {
                 return false;
             }
@@ -45,6 +45,7 @@ final class CookieNonceAuthMiddleware implements MiddlewareInterface
         $this->currentUserId = $currentUserId ?? static fn (): int => function_exists('get_current_user_id') ? (int) get_current_user_id() : 0;
     }
 
+    #[\Override]
     public function handle(RequestContext $context, callable $next): mixed
     {
         if ($this->requireLoggedIn && !($this->isLoggedIn)()) {

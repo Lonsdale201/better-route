@@ -17,6 +17,7 @@ final class PrometheusMetricSink implements MetricSinkInterface
     /**
      * @param array<string, string> $labels
      */
+    #[\Override]
     public function increment(string $name, int $value = 1, array $labels = []): void
     {
         $this->assertMetric($name, $labels);
@@ -39,6 +40,7 @@ final class PrometheusMetricSink implements MetricSinkInterface
     /**
      * @param array<string, string> $labels
      */
+    #[\Override]
     public function observe(string $name, float $value, array $labels = []): void
     {
         $this->assertMetric($name, $labels);

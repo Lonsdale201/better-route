@@ -28,6 +28,7 @@ final class IpAllowlistMiddleware implements MiddlewareInterface
         $this->allowedCidrs = array_values($allowedCidrs);
     }
 
+    #[\Override]
     public function handle(RequestContext $context, callable $next): mixed
     {
         $clientIp = $this->ipResolver->resolve($context->request);

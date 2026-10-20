@@ -56,6 +56,7 @@ final class AtomicIdempotencyMiddleware implements MiddlewareInterface
         $this->fingerprintResolver = $fingerprintResolver ?? fn (RequestContext $context): string => $this->defaultFingerprint($context);
     }
 
+    #[\Override]
     public function handle(RequestContext $context, callable $next): mixed
     {
         $method = $this->requestMethod($context->request);

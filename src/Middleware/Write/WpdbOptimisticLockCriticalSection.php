@@ -17,6 +17,7 @@ final class WpdbOptimisticLockCriticalSection implements OptimisticLockCriticalS
         }
     }
 
+    #[\Override]
     public function execute(RequestContext $context, callable $callback): mixed
     {
         $wpdb = $this->wpdb();

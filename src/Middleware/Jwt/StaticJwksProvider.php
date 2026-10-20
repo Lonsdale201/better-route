@@ -17,11 +17,13 @@ final class StaticJwksProvider implements JwksProviderInterface
         $this->keys = JwksKeySanitizer::sanitizeKeys($keys);
     }
 
+    #[\Override]
     public function keys(): array
     {
         return $this->keys;
     }
 
+    #[\Override]
     public function refresh(): void
     {
     }

@@ -12,7 +12,8 @@ final class ArraySingleUseTokenStore implements SingleUseTokenStoreInterface
     /** @var array<string, int> */
     private array $consumed = [];
 
-    public function consume(string $tokenHash): ?array
+    #[\Override]
+    public function consume(#[\SensitiveParameter] string $tokenHash): ?array
     {
         $this->prune();
         $item = $this->items[$tokenHash] ?? null;
@@ -26,7 +27,8 @@ final class ArraySingleUseTokenStore implements SingleUseTokenStoreInterface
         return $item['context'];
     }
 
-    public function store(string $tokenHash, array $context, int $ttlSeconds): void
+    #[\Override]
+    public function store(#[\SensitiveParameter] string $tokenHash, #[\SensitiveParameter] array $context, int $ttlSeconds): void
     {
         $this->prune();
         unset($this->consumed[$tokenHash]);
@@ -36,7 +38,8 @@ final class ArraySingleUseTokenStore implements SingleUseTokenStoreInterface
         ];
     }
 
-    public function wasConsumed(string $tokenHash): bool
+    #[\Override]
+    public function wasConsumed(#[\SensitiveParameter] string $tokenHash): bool
     {
         $this->prune();
         return isset($this->consumed[$tokenHash]);

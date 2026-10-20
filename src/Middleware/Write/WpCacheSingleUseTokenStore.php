@@ -31,7 +31,8 @@ final class WpCacheSingleUseTokenStore implements SingleUseTokenStoreInterface
         }
     }
 
-    public function consume(string $tokenHash): ?array
+    #[\Override]
+    public function consume(#[\SensitiveParameter] string $tokenHash): ?array
     {
         $lockKey = $this->lockKey($tokenHash);
         if (!wp_cache_add($lockKey, 1, $this->group, max(1, $this->lockTtlSeconds))) {
@@ -60,7 +61,8 @@ final class WpCacheSingleUseTokenStore implements SingleUseTokenStoreInterface
         }
     }
 
-    public function store(string $tokenHash, array $context, int $ttlSeconds): void
+    #[\Override]
+    public function store(#[\SensitiveParameter] string $tokenHash, #[\SensitiveParameter] array $context, int $ttlSeconds): void
     {
         $ttlSeconds = max(1, $ttlSeconds);
         set_transient($this->recordKey($tokenHash), [
@@ -70,22 +72,23 @@ final class WpCacheSingleUseTokenStore implements SingleUseTokenStoreInterface
         delete_transient($this->consumedKey($tokenHash));
     }
 
-    public function wasConsumed(string $tokenHash): bool
+    #[\Override]
+    public function wasConsumed(#[\SensitiveParameter] string $tokenHash): bool
     {
         return get_transient($this->consumedKey($tokenHash)) !== false;
     }
 
-    private function recordKey(string $tokenHash): string
+    private function recordKey(#[\SensitiveParameter] string $tokenHash): string
     {
         return 'better_route_sut_' . sha1($tokenHash);
     }
 
-    private function consumedKey(string $tokenHash): string
+    private function consumedKey(#[\SensitiveParameter] string $tokenHash): string
     {
         return 'better_route_sut_used_' . sha1($tokenHash);
     }
 
-    private function lockKey(string $tokenHash): string
+    private function lockKey(#[\SensitiveParameter] string $tokenHash): string
     {
         return 'better_route_sut_lock_' . sha1($tokenHash);
     }

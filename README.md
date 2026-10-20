@@ -2,11 +2,11 @@
 
 [![OPEN BETTER-ROUTE DOCS](https://img.shields.io/badge/OPEN-BETTER--ROUTE%20DOCS-27AE60?style=for-the-badge&labelColor=2C3E50)](https://lonsdale201.github.io/better-docs/docs/better-route/getting-started/installation)
 
-A thin PHP 8.1+ REST routing and resource library for WordPress.
+A thin PHP 8.3+ REST routing and resource library for WordPress (unreleased development line).
 
 Built for headless and integration-heavy projects where you want a stable, versioned API contract on top of WP.
 
-Version 1.1.2 supports PHP 8.1+. Static analysis uses WordPress 6.9 and WooCommerce 10.9 stubs. WooCommerce is optional. CI tests PHP 8.1–8.4 and runs WordPress 6.9.4 / WooCommerce 10.9.4 service, Analytics and wire-schema checks on PHP 8.1/8.3 in HPOS and CPT modes. This does not establish every runtime/version combination. The later PHP 8.3 minimum development line is separate from 1.1.2.
+Latest stable [1.1.2](https://github.com/Lonsdale201/better-route/releases/tag/v1.1.2) supports PHP 8.1+ and remains available on Packagist. This development branch requires PHP 8.3+. Static analysis uses WordPress 6.9 and WooCommerce 10.9 stubs. WooCommerce is optional. Development CI tests PHP 8.3–8.5 and runs WordPress 6.9.4 / WooCommerce 10.9.4 service, Analytics and wire-schema checks on PHP 8.3/8.5 in HPOS and CPT modes. This does not establish every runtime/version combination.
 
 ## What It Gives You
 
@@ -291,7 +291,8 @@ metric sink failures are best-effort and never change the API response.
 Export route/resource contracts as OpenAPI 3.1 JSON and optionally expose the document
 as a protected REST endpoint. CI validates serialized documents and representative DTOs,
 including native WooCommerce responses, against their schemas. The runtime library
-keeps its PHP 8.1 minimum and has no validator dependency.
+has no validator dependency. Stable 1.1.2 keeps its PHP 8.1 minimum; this development
+branch requires PHP 8.3.
 
 Applications supply custom handler schemas and actual authentication schemes. Named
 WordPress captures (including balanced nested groups) become path parameters; regex
@@ -646,6 +647,13 @@ HTTP HEAD and inline 204/304 responses have no documented response body.
 
 ## Local Quality Commands
 
+GitHub CI runs for pull requests to `main` and again after a push to `main`.
+The quality matrix covers PHP 8.3, 8.4 and 8.5; the native WP/Woo jobs cover PHP
+8.3 and 8.5 with HPOS and CPT. All six checks are required before merging.
+Jobs use Ubuntu 24.04, bounded timeouts, a read-only repository token and
+Node.js 24 Actions pinned to full commit SHAs. Dependabot proposes weekly Action
+updates. Develop through short-lived PR branches; merged branches are deleted.
+
 ```bash
 composer test
 composer analyse
@@ -656,7 +664,7 @@ python tests/openapi/validate.py /tmp/better-route-openapi.json
 ```
 
 The CI workflow also installs disposable WordPress 6.9.4 / WooCommerce 10.9.4 and runs
-the service/Analytics smoke suites on PHP 8.1 and 8.3, with HPOS and CPT storage.
+the service/Analytics smoke suites on PHP 8.3 and 8.5, with HPOS and CPT storage.
 Both runtime jobs validate synthetic native responses against the exported schemas.
 `BR_OPENAPI_SAMPLE_DIR` optionally captures smoke-only samples outside the webroot;
 use it exclusively with disposable synthetic data. A separate OpenAPI job validates
@@ -678,9 +686,36 @@ using native WordPress Application Passwords.
 
 ## Current Status
 
-Stable release — 1.1.2, PHP 8.1+. See [migration guidance](MIGRATING.md) before updating an existing deployment, especially one using idempotency, custom customer roles or middleware-authenticated WordPress users.
+Latest stable release: 1.1.2, PHP 8.1+. This branch develops the next release with a PHP 8.3 minimum; it has no release tag yet. See [migration guidance](MIGRATING.md) before updating an existing deployment, especially one using idempotency, custom customer roles or middleware-authenticated WordPress users.
+
+### PHP 8.3 hardening in development
+
+- `#[SensitiveParameter]` redacts annotated Better Route argument frames for secrets,
+  credentials, JWT claims and single-use token context, including nested helpers and
+  the library's default authentication closures. Interfaces and implementations are
+  annotated separately because parameter attributes do not propagate.
+- This is argument redaction, not a general log scrubber. Exception messages, stored
+  object properties, request/context objects, globals and arguments passed onward to
+  PHP builtins, WordPress or external callbacks can still contain sensitive data.
+  Do not expose detailed exceptions publicly or log raw requests/tokens.
+- `#[Override]` makes PHP check interface implementation methods at class load time.
+  Typed constants retain their existing names and values.
+- Existing immutable request/response, route and Woo query/policy objects are now
+  readonly classes. Undeclared dynamic properties fail; contained objects remain
+  mutable. Use `RequestContext::withAttribute()` for per-request extension data.
+
+These changes strengthen error handling and enforce existing contracts. No measured
+performance improvement is claimed. JSON decoding remains a single parse rather
+than adding a redundant `json_validate()` call before `json_decode()`.
 
 ## Changelog
+
+### Unreleased — PHP 8.3 minimum
+
+- Require PHP 8.3 and test PHP 8.3–8.5; keep the published 1.1.2 release on PHP 8.1.
+- Redact sensitive library argument frames, including nested JWT/claims helpers.
+- Enforce interface overrides, readonly DTO classes and typed constant contracts.
+- Add regressions with exception argument collection enabled and class-loading checks.
 
 ### 1.1.2 — 2026-10-20
 

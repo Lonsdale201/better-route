@@ -13,6 +13,7 @@ final class WordPressTableRepository implements TableRepositoryInterface
     ) {
     }
 
+    #[\Override]
     public function list(string $table, string $primaryKey, TableListQuery $query): array
     {
         return $this->adapter->list(
@@ -27,6 +28,7 @@ final class WordPressTableRepository implements TableRepositoryInterface
         );
     }
 
+    #[\Override]
     public function get(string $table, string $primaryKey, int $id, array $fields): ?array
     {
         return $this->adapter->get(
@@ -37,6 +39,7 @@ final class WordPressTableRepository implements TableRepositoryInterface
         );
     }
 
+    #[\Override]
     public function create(string $table, string $primaryKey, array $payload, array $fields): array
     {
         return $this->adapter->create(
@@ -47,6 +50,7 @@ final class WordPressTableRepository implements TableRepositoryInterface
         );
     }
 
+    #[\Override]
     public function update(string $table, string $primaryKey, int $id, array $payload, array $fields): ?array
     {
         return $this->adapter->update(
@@ -58,6 +62,7 @@ final class WordPressTableRepository implements TableRepositoryInterface
         );
     }
 
+    #[\Override]
     public function delete(string $table, string $primaryKey, int $id): bool
     {
         return $this->adapter->delete(

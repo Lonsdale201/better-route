@@ -4,6 +4,27 @@ The Composer package version and your REST namespace version are independent.
 Updating the library does not rename your `myapp/v1` routes. Treat changes to your
 own response schemas and permissions as changes to your application's API contract.
 
+## 1.1.2 to the unreleased PHP 8.3 development line
+
+The published 1.1.2 tag remains PHP 8.1-compatible. The next development line requires
+PHP 8.3 in Composer and in every web, CLI, cron and worker process. Upgrade the runtime
+before installing it. The minimum-version change is not part of the 1.1.2 release.
+
+- Request/response, route and Woo query/policy DTOs are readonly classes. Their
+  constructors and declared properties are unchanged, but attaching undeclared
+  dynamic properties now throws an error. Use `RequestContext::withAttribute()` or
+  keep application state separately. Object-valued properties remain shallowly readonly.
+- Sensitive parameter annotations redact annotated Better Route argument frames,
+  including nested JWT claim parsers. They do not sanitize exception messages, object
+  properties, arbitrary request data or third-party/core callback frames. Keep normal
+  production error-display restrictions and logging redaction in place.
+- Interface implementations are checked with `#[Override]`; constant names and values
+  are unchanged. There is no storage-schema, cache-key or idempotency-key migration
+  in this development change.
+
+No next release number or publication date has been assigned. CI for this branch
+targets PHP 8.3–8.5, with native WP/Woo checks on PHP 8.3/8.5 and both order stores.
+
 ## 1.1.1 to 1.1.2
 
 - OpenAPI remains PHP 8.1-compatible and now validates generated documents in CI.

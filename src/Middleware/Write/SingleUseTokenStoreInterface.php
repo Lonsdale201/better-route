@@ -9,12 +9,12 @@ interface SingleUseTokenStoreInterface
     /**
      * @return array<string, mixed>|null
      */
-    public function consume(string $tokenHash): ?array;
+    public function consume(#[\SensitiveParameter] string $tokenHash): ?array;
 
     /**
      * @param array<string, mixed> $context
      */
-    public function store(string $tokenHash, array $context, int $ttlSeconds): void;
+    public function store(#[\SensitiveParameter] string $tokenHash, #[\SensitiveParameter] array $context, int $ttlSeconds): void;
 
-    public function wasConsumed(string $tokenHash): bool;
+    public function wasConsumed(#[\SensitiveParameter] string $tokenHash): bool;
 }

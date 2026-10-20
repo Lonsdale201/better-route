@@ -21,6 +21,7 @@ final class OptimisticLockMiddleware implements MiddlewareInterface
     ) {
     }
 
+    #[\Override]
     public function handle(RequestContext $context, callable $next): mixed
     {
         $expected = $this->extractExpectedVersion($context->request);

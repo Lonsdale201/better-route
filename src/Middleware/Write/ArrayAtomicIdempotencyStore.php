@@ -9,6 +9,7 @@ final class ArrayAtomicIdempotencyStore implements LeaseAwareAtomicIdempotencySt
     /** @var array<string, array{fingerprint: string, status: string, response: mixed, expires_at: int, token: string}> */
     private array $items = [];
 
+    #[\Override]
     public function reserve(string $key, string $fingerprint, int $ttlSeconds): AtomicIdempotencyRecord
     {
         $now = time();
@@ -47,15 +48,17 @@ final class ArrayAtomicIdempotencyStore implements LeaseAwareAtomicIdempotencySt
         return new AtomicIdempotencyRecord(AtomicIdempotencyRecord::IN_PROGRESS, $fingerprint);
     }
 
+    #[\Override]
     public function complete(string $key, string $fingerprint, mixed $response, int $ttlSeconds): void
     {
         throw new \RuntimeException('Use completeReservation() with the reservation token.');
     }
 
+    #[\Override]
     public function completeReservation(
         string $key,
         string $fingerprint,
-        string $reservationToken,
+        #[\SensitiveParameter] string $reservationToken,
         mixed $response,
         int $ttlSeconds
     ): void {
@@ -78,12 +81,14 @@ final class ArrayAtomicIdempotencyStore implements LeaseAwareAtomicIdempotencySt
         ];
     }
 
+    #[\Override]
     public function release(string $key, string $fingerprint): void
     {
         throw new \RuntimeException('Use releaseReservation() with the reservation token.');
     }
 
-    public function releaseReservation(string $key, string $fingerprint, string $reservationToken): void
+    #[\Override]
+    public function releaseReservation(string $key, string $fingerprint, #[\SensitiveParameter] string $reservationToken): void
     {
         $existing = $this->items[$key] ?? null;
         if (

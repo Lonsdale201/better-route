@@ -4,7 +4,7 @@ declare(strict_types=1);
 
 namespace BetterRoute\Integration\Woo;
 
-final class ProductListQuery
+final readonly class ProductListQuery
 {
     /**
      * @param list<string> $fields

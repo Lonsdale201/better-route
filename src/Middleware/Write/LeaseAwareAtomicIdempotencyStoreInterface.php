@@ -9,10 +9,10 @@ interface LeaseAwareAtomicIdempotencyStoreInterface extends AtomicIdempotencySto
     public function completeReservation(
         string $key,
         string $fingerprint,
-        string $reservationToken,
+        #[\SensitiveParameter] string $reservationToken,
         mixed $response,
         int $ttlSeconds
     ): void;
 
-    public function releaseReservation(string $key, string $fingerprint, string $reservationToken): void;
+    public function releaseReservation(string $key, string $fingerprint, #[\SensitiveParameter] string $reservationToken): void;
 }

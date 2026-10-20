@@ -6,7 +6,7 @@ namespace BetterRoute\Http;
 
 use InvalidArgumentException;
 
-final class Response
+final readonly class Response
 {
     /**
      * @param array<string, string> $headers

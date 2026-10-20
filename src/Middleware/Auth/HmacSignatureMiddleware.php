@@ -30,7 +30,7 @@ final class HmacSignatureMiddleware implements MiddlewareInterface
      * @param null|callable(): int $now
      */
     public function __construct(
-        private readonly HmacSecretProviderInterface $secrets,
+        #[\SensitiveParameter] private readonly HmacSecretProviderInterface $secrets,
         private readonly string $signatureHeader = 'X-Signature',
         private readonly string $timestampHeader = 'X-Timestamp',
         private readonly string $keyIdHeader = 'X-Key-Id',
@@ -49,6 +49,7 @@ final class HmacSignatureMiddleware implements MiddlewareInterface
         $this->now = $now ?? static fn (): int => time();
     }
 
+    #[\Override]
     public function handle(RequestContext $context, callable $next): mixed
     {
         $signature = $this->requiredHeader($context->request, $this->signatureHeader);
@@ -91,7 +92,7 @@ final class HmacSignatureMiddleware implements MiddlewareInterface
         return $next($authenticated);
     }
 
-    private function matchesSignature(string $signature, string $canonical, string $secret): bool
+    private function matchesSignature(#[\SensitiveParameter] string $signature, #[\SensitiveParameter] string $canonical, #[\SensitiveParameter] string $secret): bool
     {
         $raw = hash_hmac($this->algorithm, $canonical, $secret, true);
         $hex = hash_hmac($this->algorithm, $canonical, $secret, false);

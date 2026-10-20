@@ -4,7 +4,7 @@ declare(strict_types=1);
 
 namespace BetterRoute\Http;
 
-final class RequestContext
+final readonly class RequestContext
 {
     /**
      * @param array<string, mixed> $attributes

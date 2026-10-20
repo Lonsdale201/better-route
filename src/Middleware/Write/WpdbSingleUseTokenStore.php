@@ -15,7 +15,8 @@ final class WpdbSingleUseTokenStore implements SingleUseTokenStoreInterface
         $this->assertWpdb();
     }
 
-    public function consume(string $tokenHash): ?array
+    #[\Override]
+    public function consume(#[\SensitiveParameter] string $tokenHash): ?array
     {
         $wpdb = $this->wpdb();
         $table = $this->tableName();
@@ -55,7 +56,8 @@ final class WpdbSingleUseTokenStore implements SingleUseTokenStoreInterface
         return $this->decodeContext(is_string($row['context'] ?? null) ? $row['context'] : '');
     }
 
-    public function store(string $tokenHash, array $context, int $ttlSeconds): void
+    #[\Override]
+    public function store(#[\SensitiveParameter] string $tokenHash, #[\SensitiveParameter] array $context, int $ttlSeconds): void
     {
         $wpdb = $this->wpdb();
         $table = $this->tableName();
@@ -80,7 +82,8 @@ final class WpdbSingleUseTokenStore implements SingleUseTokenStoreInterface
         }
     }
 
-    public function wasConsumed(string $tokenHash): bool
+    #[\Override]
+    public function wasConsumed(#[\SensitiveParameter] string $tokenHash): bool
     {
         $wpdb = $this->wpdb();
         $table = $this->tableName();
@@ -129,7 +132,7 @@ final class WpdbSingleUseTokenStore implements SingleUseTokenStoreInterface
     /**
      * @return array<string, mixed>
      */
-    private function decodeContext(string $serialized): array
+    private function decodeContext(#[\SensitiveParameter] string $serialized): array
     {
         if ($serialized === '') {
             return [];
@@ -148,7 +151,7 @@ final class WpdbSingleUseTokenStore implements SingleUseTokenStoreInterface
         ));
     }
 
-    private function storageKey(string $tokenHash): string
+    private function storageKey(#[\SensitiveParameter] string $tokenHash): string
     {
         return hash('sha256', $tokenHash);
     }

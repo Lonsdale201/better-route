@@ -11,5 +11,5 @@ interface ClaimsUserMapperInterface
     /**
      * @param array<string, mixed> $claims
      */
-    public function mapUserId(array $claims, RequestContext $context): ?int;
+    public function mapUserId(#[\SensitiveParameter] array $claims, RequestContext $context): ?int;
 }

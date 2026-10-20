@@ -38,6 +38,7 @@ final class CachingMiddleware implements MiddlewareInterface
         $this->keyResolver = $keyResolver ?? fn (RequestContext $context): string => $this->defaultKey($context);
     }
 
+    #[\Override]
     public function handle(RequestContext $context, callable $next): mixed
     {
         if (!$this->isGetRequest($context->request)) {

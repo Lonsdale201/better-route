@@ -8,7 +8,7 @@ use RuntimeException;
 
 final class Crypto
 {
-    public static function equals(string $known, string $user): bool
+    public static function equals(#[\SensitiveParameter] string $known, #[\SensitiveParameter] string $user): bool
     {
         return hash_equals($known, $user);
     }
@@ -31,7 +31,7 @@ final class Crypto
         return bin2hex(random_bytes($bytes));
     }
 
-    public static function encode(string $raw, string|CryptoEncoding $encoding): string
+    public static function encode(#[\SensitiveParameter] string $raw, string|CryptoEncoding $encoding): string
     {
         return match (self::normalizeEncoding($encoding)) {
             CryptoEncoding::Hex => bin2hex($raw),
@@ -40,12 +40,12 @@ final class Crypto
         };
     }
 
-    public static function base64UrlEncode(string $raw): string
+    public static function base64UrlEncode(#[\SensitiveParameter] string $raw): string
     {
         return rtrim(strtr(base64_encode($raw), '+/', '-_'), '=');
     }
 
-    public static function base64UrlDecode(string $encoded): string
+    public static function base64UrlDecode(#[\SensitiveParameter] string $encoded): string
     {
         if (preg_match('/^[A-Za-z0-9_-]*={0,2}$/', $encoded) !== 1) {
             throw new RuntimeException('Invalid base64url payload.');

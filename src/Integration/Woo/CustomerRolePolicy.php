@@ -7,9 +7,9 @@ namespace BetterRoute\Integration\Woo;
 use BetterRoute\Http\ApiException;
 
 /** One visibility boundary shared by list, detail and mutations. Never assigns roles. */
-final class CustomerRolePolicy
+final readonly class CustomerRolePolicy
 {
-    public const PRIVILEGED_CAPABILITIES = [
+    public const array PRIVILEGED_CAPABILITIES = [
         'manage_options', 'manage_woocommerce', 'edit_users', 'create_users',
         'delete_users', 'promote_users', 'manage_network',
         'install_plugins', 'update_plugins', 'edit_plugins', 'activate_plugins', 'delete_plugins',

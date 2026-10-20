@@ -34,6 +34,7 @@ final class WpObjectCacheRateLimiter implements RateLimiterInterface
         $this->now = $now ?? static fn (): int => time();
     }
 
+    #[\Override]
     public function hit(string $key, int $limit, int $windowSeconds): RateLimitResult
     {
         if ($limit < 1 || $windowSeconds < 1) {

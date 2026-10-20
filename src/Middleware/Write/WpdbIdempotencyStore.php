@@ -15,6 +15,7 @@ final class WpdbIdempotencyStore implements IdempotencyStoreInterface
         $this->assertWpdb();
     }
 
+    #[\Override]
     public function get(string $key): mixed
     {
         $wpdb = $this->wpdb();
@@ -53,6 +54,7 @@ final class WpdbIdempotencyStore implements IdempotencyStoreInterface
         return unserialize($serialized, ['allowed_classes' => [\BetterRoute\Http\Response::class]]);
     }
 
+    #[\Override]
     public function set(string $key, mixed $value, int $ttlSeconds): void
     {
         $wpdb = $this->wpdb();
