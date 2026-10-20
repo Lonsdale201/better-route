@@ -17,6 +17,7 @@ final class CallbackOptimisticLockCriticalSection implements OptimisticLockCriti
         $this->executor = $executor;
     }
 
+    #[\Override]
     public function execute(RequestContext $context, callable $callback): mixed
     {
         return ($this->executor)($context, $callback);

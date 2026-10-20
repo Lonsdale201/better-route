@@ -4,7 +4,7 @@ declare(strict_types=1);
 
 namespace BetterRoute\Router;
 
-final class RouteDefinition
+final readonly class RouteDefinition
 {
     /**
      * @param list<mixed> $middlewares

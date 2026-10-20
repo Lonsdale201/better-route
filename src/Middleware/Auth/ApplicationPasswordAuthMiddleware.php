@@ -33,7 +33,7 @@ final class ApplicationPasswordAuthMiddleware implements MiddlewareInterface
         ?callable $getCurrentUser = null
     ) {
         $this->getCurrentUser = $getCurrentUser;
-        $this->authenticate = $authenticate ?? static function (string $username, string $password, mixed $request): mixed {
+        $this->authenticate = $authenticate ?? static function (#[\SensitiveParameter] string $username, #[\SensitiveParameter] string $password, mixed $request): mixed {
             if (!function_exists('wp_authenticate_application_password')) {
                 return null;
             }
@@ -48,6 +48,7 @@ final class ApplicationPasswordAuthMiddleware implements MiddlewareInterface
         };
     }
 
+    #[\Override]
     public function handle(RequestContext $context, callable $next): mixed
     {
         [$username, $password] = $this->extractBasicCredentials($context->request);
@@ -112,7 +113,7 @@ final class ApplicationPasswordAuthMiddleware implements MiddlewareInterface
         return class_exists('WP_Error') && $value instanceof \WP_Error;
     }
 
-    private function invokeAuthenticate(string $username, string $password, mixed $request): mixed
+    private function invokeAuthenticate(#[\SensitiveParameter] string $username, #[\SensitiveParameter] string $password, mixed $request): mixed
     {
         $args = [$username, $password, $request];
 

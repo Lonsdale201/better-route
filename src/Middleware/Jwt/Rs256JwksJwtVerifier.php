@@ -50,7 +50,8 @@ final class Rs256JwksJwtVerifier implements JwtVerifierInterface
         $this->now = $now ?? static fn (): int => time();
     }
 
-    public function verify(string $token): array
+    #[\Override]
+    public function verify(#[\SensitiveParameter] string $token): array
     {
         if (strlen($token) > $this->maxTokenLength) {
             throw new RuntimeException('JWT is too large.');
@@ -126,7 +127,7 @@ final class Rs256JwksJwtVerifier implements JwtVerifierInterface
     /**
      * @return array<string, mixed>
      */
-    private function decodePart(string $part, string $name): array
+    private function decodePart(#[\SensitiveParameter] string $part, string $name): array
     {
         $decoded = Crypto::base64UrlDecode($part);
         $payload = json_decode($decoded, true);
@@ -140,7 +141,7 @@ final class Rs256JwksJwtVerifier implements JwtVerifierInterface
     /**
      * @param array<string, mixed> $header
      */
-    private function headerString(array $header, string $field): string
+    private function headerString(#[\SensitiveParameter] array $header, string $field): string
     {
         $value = $header[$field] ?? null;
         if (!is_string($value) || $value === '') {
@@ -153,7 +154,7 @@ final class Rs256JwksJwtVerifier implements JwtVerifierInterface
     /**
      * @return array<string, string>|null
      */
-    private function resolveKey(string $kid, string $alg): ?array
+    private function resolveKey(#[\SensitiveParameter] string $kid, string $alg): ?array
     {
         $matches = [];
         foreach ($this->jwks->keys() as $key) {
@@ -202,7 +203,7 @@ final class Rs256JwksJwtVerifier implements JwtVerifierInterface
     /**
      * @param array<string, string> $key
      */
-    private function assertValidSignature(string $alg, string $input, string $signature, array $key): void
+    private function assertValidSignature(string $alg, #[\SensitiveParameter] string $input, #[\SensitiveParameter] string $signature, array $key): void
     {
         if (!function_exists('openssl_verify')) {
             throw new RuntimeException('OpenSSL is required for JWT verification.');
@@ -270,7 +271,7 @@ final class Rs256JwksJwtVerifier implements JwtVerifierInterface
         ));
     }
 
-    private function ecdsaJoseSignatureToDer(string $signature): string
+    private function ecdsaJoseSignatureToDer(#[\SensitiveParameter] string $signature): string
     {
         if (strlen($signature) !== 64) {
             throw new RuntimeException('Invalid ES256 JWT signature.');
@@ -357,7 +358,7 @@ final class Rs256JwksJwtVerifier implements JwtVerifierInterface
     /**
      * @param array<string, mixed> $claims
      */
-    private function assertTimeClaims(array $claims): void
+    private function assertTimeClaims(#[\SensitiveParameter] array $claims): void
     {
         $now = ($this->now)();
 
@@ -401,7 +402,7 @@ final class Rs256JwksJwtVerifier implements JwtVerifierInterface
     /**
      * @param array<string, mixed> $claims
      */
-    private function assertIssuer(array $claims): void
+    private function assertIssuer(#[\SensitiveParameter] array $claims): void
     {
         if ($this->expectedIssuer === null) {
             return;
@@ -415,7 +416,7 @@ final class Rs256JwksJwtVerifier implements JwtVerifierInterface
     /**
      * @param array<string, mixed> $claims
      */
-    private function assertAudience(array $claims): void
+    private function assertAudience(#[\SensitiveParameter] array $claims): void
     {
         if ($this->expectedAudience === null) {
             return;
@@ -433,7 +434,7 @@ final class Rs256JwksJwtVerifier implements JwtVerifierInterface
         throw new RuntimeException('JWT audience mismatch.');
     }
 
-    private function parseNumericClaim(mixed $value, string $name): int
+    private function parseNumericClaim(#[\SensitiveParameter] mixed $value, string $name): int
     {
         if (is_int($value)) {
             return $value;

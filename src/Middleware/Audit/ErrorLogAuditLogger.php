@@ -27,6 +27,7 @@ final class ErrorLogAuditLogger implements AuditLoggerInterface
         $this->encoder = $encoder ?? static fn (mixed $value): string|false => json_encode($value, JSON_UNESCAPED_SLASHES);
     }
 
+    #[\Override]
     public function log(array $event): void
     {
         $encoded = ($this->encoder)($event);

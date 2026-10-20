@@ -11,6 +11,7 @@ final class ArrayIdempotencyStore implements IdempotencyStoreInterface
      */
     private array $items = [];
 
+    #[\Override]
     public function get(string $key): mixed
     {
         $this->gc();
@@ -22,6 +23,7 @@ final class ArrayIdempotencyStore implements IdempotencyStoreInterface
         return $this->items[$key]['value'];
     }
 
+    #[\Override]
     public function set(string $key, mixed $value, int $ttlSeconds): void
     {
         $ttl = max(1, $ttlSeconds);

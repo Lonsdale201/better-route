@@ -15,6 +15,7 @@ final class InMemoryMetricSink implements MetricSinkInterface
     /**
      * @param array<string, string> $labels
      */
+    #[\Override]
     public function increment(string $name, int $value = 1, array $labels = []): void
     {
         $key = $this->key($name, $labels);
@@ -24,6 +25,7 @@ final class InMemoryMetricSink implements MetricSinkInterface
     /**
      * @param array<string, string> $labels
      */
+    #[\Override]
     public function observe(string $name, float $value, array $labels = []): void
     {
         $key = $this->key($name, $labels);

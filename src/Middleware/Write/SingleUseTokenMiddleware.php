@@ -26,7 +26,7 @@ final class SingleUseTokenMiddleware implements MiddlewareInterface
         private readonly SingleUseTokenStoreInterface $store,
         callable $tokenSource,
         ?callable $onConsumed = null,
-        private readonly string $hashSalt = '',
+        #[\SensitiveParameter] private readonly string $hashSalt = '',
         private readonly int $ttlSeconds = 300
     ) {
         if ($ttlSeconds < 1) {
@@ -37,6 +37,7 @@ final class SingleUseTokenMiddleware implements MiddlewareInterface
         $this->onConsumed = $onConsumed;
     }
 
+    #[\Override]
     public function handle(RequestContext $context, callable $next): mixed
     {
         $token = ($this->tokenSource)($context->request);
@@ -68,7 +69,7 @@ final class SingleUseTokenMiddleware implements MiddlewareInterface
     /**
      * @param array<string, mixed> $context
      */
-    public function storeToken(string $token, array $context, ?int $ttlSeconds = null): void
+    public function storeToken(#[\SensitiveParameter] string $token, #[\SensitiveParameter] array $context, ?int $ttlSeconds = null): void
     {
         $this->store->store(
             self::hashToken($token, $this->resolvedHashSalt()),
@@ -77,7 +78,7 @@ final class SingleUseTokenMiddleware implements MiddlewareInterface
         );
     }
 
-    public static function hashToken(string $token, string $salt): string
+    public static function hashToken(#[\SensitiveParameter] string $token, #[\SensitiveParameter] string $salt): string
     {
         if ($salt === '') {
             throw new RuntimeException('Single-use token hash salt must not be empty.');

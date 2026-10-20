@@ -26,6 +26,7 @@ final class TrustedProxyClientIpResolver implements ClientIpResolverInterface
         $this->serverResolver = $serverResolver ?? static fn (): array => $_SERVER;
     }
 
+    #[\Override]
     public function resolve(mixed $request = null): ?string
     {
         $server = ($this->serverResolver)();

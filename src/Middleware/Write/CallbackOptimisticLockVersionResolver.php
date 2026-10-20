@@ -19,6 +19,7 @@ final class CallbackOptimisticLockVersionResolver implements OptimisticLockVersi
         $this->resolver = $resolver;
     }
 
+    #[\Override]
     public function resolve(RequestContext $context): string|int|null
     {
         return ($this->resolver)($context);

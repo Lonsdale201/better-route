@@ -6,16 +6,16 @@ namespace BetterRoute\Middleware\Write;
 
 final class AtomicIdempotencyRecord
 {
-    public const RESERVED = 'reserved';
-    public const REPLAY = 'replay';
-    public const CONFLICT = 'conflict';
-    public const IN_PROGRESS = 'in_progress';
+    public const string RESERVED = 'reserved';
+    public const string REPLAY = 'replay';
+    public const string CONFLICT = 'conflict';
+    public const string IN_PROGRESS = 'in_progress';
 
     public function __construct(
         public readonly string $status,
         public readonly ?string $fingerprint = null,
         public readonly mixed $response = null,
-        public readonly ?string $reservationToken = null
+        #[\SensitiveParameter] public readonly ?string $reservationToken = null
     ) {
     }
 

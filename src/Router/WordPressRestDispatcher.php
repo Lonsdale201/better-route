@@ -8,6 +8,7 @@ use RuntimeException;
 
 final class WordPressRestDispatcher implements DispatcherInterface
 {
+    #[\Override]
     public function register(
         string $namespace,
         RouteDefinition $route,

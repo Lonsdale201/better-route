@@ -26,11 +26,13 @@ final class TransientIdempotencyStore implements IdempotencyStoreInterface
         $this->setTransient = $setTransient ?? $this->defaultSetTransient();
     }
 
+    #[\Override]
     public function get(string $key): mixed
     {
         return ($this->getTransient)($this->storageKey($key));
     }
 
+    #[\Override]
     public function set(string $key, mixed $value, int $ttlSeconds): void
     {
         $ttlSeconds = max(1, $ttlSeconds);

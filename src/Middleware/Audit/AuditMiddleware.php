@@ -19,6 +19,7 @@ final class AuditMiddleware implements MiddlewareInterface
     ) {
     }
 
+    #[\Override]
     public function handle(RequestContext $context, callable $next): mixed
     {
         $startedAt = microtime(true);

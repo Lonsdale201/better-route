@@ -13,9 +13,9 @@ final class AuthIdentity
     public function __construct(
         public readonly string $provider,
         public readonly ?int $userId = null,
-        public readonly ?string $subject = null,
-        public readonly array $claims = [],
-        public readonly array $scopes = [],
+        #[\SensitiveParameter] public readonly ?string $subject = null,
+        #[\SensitiveParameter] public readonly array $claims = [],
+        #[\SensitiveParameter] public readonly array $scopes = [],
         public readonly mixed $user = null
     ) {
     }

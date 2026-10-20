@@ -13,7 +13,8 @@ final class JwtBearerTokenVerifierAdapter implements BearerTokenVerifierInterfac
     ) {
     }
 
-    public function verify(string $token): array
+    #[\Override]
+    public function verify(#[\SensitiveParameter] string $token): array
     {
         return $this->verifier->verify($token);
     }

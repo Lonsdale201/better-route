@@ -24,6 +24,7 @@ final class OwnershipGuardMiddleware implements MiddlewareInterface
         $this->ownerResolver = $ownerResolver;
     }
 
+    #[\Override]
     public function handle(RequestContext $context, callable $next): mixed
     {
         if ($this->bypassCapability !== null && function_exists('current_user_can') && current_user_can($this->bypassCapability)) {

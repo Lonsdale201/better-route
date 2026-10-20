@@ -16,7 +16,7 @@ final class Hs256JwtVerifier implements JwtVerifierInterface
      * @param null|callable(): int $now
      */
     public function __construct(
-        private readonly string $secret,
+        #[\SensitiveParameter] private readonly string $secret,
         private readonly int $leewaySeconds = 0,
         ?callable $now = null,
         private readonly ?string $expectedIssuer = null,
@@ -38,7 +38,8 @@ final class Hs256JwtVerifier implements JwtVerifierInterface
         $this->now = $now ?? static fn (): int => time();
     }
 
-    public function verify(string $token): array
+    #[\Override]
+    public function verify(#[\SensitiveParameter] string $token): array
     {
         if (strlen($token) > $this->maxTokenLength) {
             throw new RuntimeException('JWT is too large.');
@@ -72,7 +73,7 @@ final class Hs256JwtVerifier implements JwtVerifierInterface
         return $payload;
     }
 
-    private function sign(string $input): string
+    private function sign(#[\SensitiveParameter] string $input): string
     {
         return hash_hmac('sha256', $input, $this->secret, true);
     }
@@ -80,7 +81,7 @@ final class Hs256JwtVerifier implements JwtVerifierInterface
     /**
      * @return array<string, mixed>
      */
-    private function decodePart(string $part, string $name): array
+    private function decodePart(#[\SensitiveParameter] string $part, string $name): array
     {
         $decoded = $this->decodeRaw($part);
         $payload = json_decode($decoded, true);
@@ -91,7 +92,7 @@ final class Hs256JwtVerifier implements JwtVerifierInterface
         return $payload;
     }
 
-    private function decodeRaw(string $part): string
+    private function decodeRaw(#[\SensitiveParameter] string $part): string
     {
         return Crypto::base64UrlDecode($part);
     }
@@ -99,7 +100,7 @@ final class Hs256JwtVerifier implements JwtVerifierInterface
     /**
      * @param array<string, mixed> $claims
      */
-    private function assertTimeClaims(array $claims): void
+    private function assertTimeClaims(#[\SensitiveParameter] array $claims): void
     {
         $now = ($this->now)();
 
@@ -143,7 +144,7 @@ final class Hs256JwtVerifier implements JwtVerifierInterface
     /**
      * @param array<string, mixed> $claims
      */
-    private function assertIssuer(array $claims): void
+    private function assertIssuer(#[\SensitiveParameter] array $claims): void
     {
         if ($this->expectedIssuer === null) {
             return;
@@ -157,7 +158,7 @@ final class Hs256JwtVerifier implements JwtVerifierInterface
     /**
      * @param array<string, mixed> $claims
      */
-    private function assertAudience(array $claims): void
+    private function assertAudience(#[\SensitiveParameter] array $claims): void
     {
         if ($this->expectedAudience === null) {
             return;
@@ -175,7 +176,7 @@ final class Hs256JwtVerifier implements JwtVerifierInterface
         throw new RuntimeException('JWT audience mismatch.');
     }
 
-    private function parseNumericClaim(mixed $value, string $name): int
+    private function parseNumericClaim(#[\SensitiveParameter] mixed $value, string $name): int
     {
         if (is_int($value)) {
             return $value;

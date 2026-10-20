@@ -53,7 +53,8 @@ final class WpClaimsUserMapper implements ClaimsUserMapperInterface
         $this->customResolver = $customResolver;
     }
 
-    public function mapUserId(array $claims, RequestContext $context): ?int
+    #[\Override]
+    public function mapUserId(#[\SensitiveParameter] array $claims, RequestContext $context): ?int
     {
         if ($this->customResolver !== null) {
             $resolved = ($this->customResolver)($claims, $context);
@@ -103,7 +104,7 @@ final class WpClaimsUserMapper implements ClaimsUserMapperInterface
     /**
      * @param array<string, mixed> $claims
      */
-    private function emailClaimIsTrustworthy(array $claims): bool
+    private function emailClaimIsTrustworthy(#[\SensitiveParameter] array $claims): bool
     {
         if (!$this->requireEmailVerified) {
             return true;
@@ -115,7 +116,7 @@ final class WpClaimsUserMapper implements ClaimsUserMapperInterface
             || (is_string($verified) && in_array(strtolower(trim($verified)), ['1', 'true'], true));
     }
 
-    private function normalizeUserId(mixed $value): ?int
+    private function normalizeUserId(#[\SensitiveParameter] mixed $value): ?int
     {
         if (is_int($value) && $value > 0) {
             return $value;
@@ -129,7 +130,7 @@ final class WpClaimsUserMapper implements ClaimsUserMapperInterface
         return null;
     }
 
-    private function findUserIdBy(string $field, string $value): ?int
+    private function findUserIdBy(string $field, #[\SensitiveParameter] string $value): ?int
     {
         if (!function_exists('get_user_by')) {
             return null;

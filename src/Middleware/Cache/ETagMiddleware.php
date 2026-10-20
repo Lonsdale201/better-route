@@ -23,6 +23,7 @@ final class ETagMiddleware implements MiddlewareInterface
         $this->etagResolver = $etagResolver;
     }
 
+    #[\Override]
     public function handle(RequestContext $context, callable $next): mixed
     {
         if (!$this->isGetOrHead($context->request)) {

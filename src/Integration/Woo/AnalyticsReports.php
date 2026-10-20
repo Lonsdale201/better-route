@@ -9,7 +9,7 @@ use BetterRoute\Http\ApiException;
 /** Fixed upstream paths, query contracts and response fields; extension fields stay private. */
 final class AnalyticsReports
 {
-    public const REPORTS = [
+    public const array REPORTS = [
         'revenue/stats', 'orders/stats', 'products', 'products/stats', 'categories',
         'customers', 'customers/stats', 'coupons', 'coupons/stats', 'taxes', 'stock', 'variations',
     ];

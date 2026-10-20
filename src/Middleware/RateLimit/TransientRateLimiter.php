@@ -40,6 +40,7 @@ final class TransientRateLimiter implements RateLimiterInterface
             ?? ($usesWordPressTransients ? $this->defaultSynchronizer() : static fn (string $key, callable $callback): mixed => $callback());
     }
 
+    #[\Override]
     public function hit(string $key, int $limit, int $windowSeconds): RateLimitResult
     {
         if ($limit < 1 || $windowSeconds < 1) {

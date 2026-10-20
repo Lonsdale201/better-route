@@ -31,6 +31,7 @@ final class MetricsMiddleware implements MiddlewareInterface
         $this->clock = $clock ?? static fn (): float => microtime(true);
     }
 
+    #[\Override]
     public function handle(RequestContext $context, callable $next): mixed
     {
         $method = $this->requestMethod($context->request);

@@ -74,6 +74,7 @@ final class HttpJwksProvider implements JwksProviderInterface
 
     private readonly string $cacheKey;
 
+    #[\Override]
     public function keys(): array
     {
         if ($this->memoryKeys !== null) {
@@ -109,6 +110,7 @@ final class HttpJwksProvider implements JwksProviderInterface
         return $this->memoryKeys;
     }
 
+    #[\Override]
     public function refresh(): void
     {
         if (!$this->mayRefresh()) {

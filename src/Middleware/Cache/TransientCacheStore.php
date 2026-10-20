@@ -26,12 +26,14 @@ final class TransientCacheStore implements CacheStoreInterface
         $this->setTransient = $setTransient ?? $this->defaultSetTransient();
     }
 
+    #[\Override]
     public function get(string $key): mixed
     {
         $value = ($this->getTransient)($this->storageKey($key));
         return $value === false ? null : $value;
     }
 
+    #[\Override]
     public function set(string $key, mixed $value, int $ttlSeconds): void
     {
         $ttlSeconds = max(1, $ttlSeconds);

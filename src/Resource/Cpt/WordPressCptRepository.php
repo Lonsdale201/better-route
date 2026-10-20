@@ -9,6 +9,7 @@ use RuntimeException;
 
 final class WordPressCptRepository implements CptDeleteModeRepositoryInterface
 {
+    #[\Override]
     public function list(string $postType, CptListQuery $query): array
     {
         if (!class_exists('WP_Query')) {
@@ -50,6 +51,7 @@ final class WordPressCptRepository implements CptDeleteModeRepositoryInterface
         ];
     }
 
+    #[\Override]
     public function get(string $postType, int $id, array $fields): ?array
     {
         if (!function_exists('get_post')) {
@@ -64,6 +66,7 @@ final class WordPressCptRepository implements CptDeleteModeRepositoryInterface
         return $this->projectPost($post, $fields);
     }
 
+    #[\Override]
     public function create(string $postType, array $payload, array $fields): array
     {
         if (!function_exists('wp_insert_post')) {
@@ -83,6 +86,7 @@ final class WordPressCptRepository implements CptDeleteModeRepositoryInterface
         return $row ?? ['id' => $id];
     }
 
+    #[\Override]
     public function update(string $postType, int $id, array $payload, array $fields): ?array
     {
         if (!function_exists('wp_update_post')) {
@@ -105,11 +109,13 @@ final class WordPressCptRepository implements CptDeleteModeRepositoryInterface
         return $this->get($postType, $id, $fields);
     }
 
+    #[\Override]
     public function delete(string $postType, int $id): bool
     {
         return $this->deleteWithMode($postType, $id, 'force');
     }
 
+    #[\Override]
     public function deleteWithMode(string $postType, int $id, string $mode): bool
     {
         if (!function_exists('wp_delete_post')) {

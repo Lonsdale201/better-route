@@ -42,6 +42,7 @@ final class JwtAuthMiddleware implements MiddlewareInterface
         };
     }
 
+    #[\Override]
     public function handle(RequestContext $context, callable $next): mixed
     {
         $token = $this->extractBearerToken($context->request);
@@ -109,7 +110,7 @@ final class JwtAuthMiddleware implements MiddlewareInterface
      * @param array<string, mixed> $claims
      * @return list<string>
      */
-    private function extractScopes(array $claims): array
+    private function extractScopes(#[\SensitiveParameter] array $claims): array
     {
         $raw = $claims['scopes'] ?? ($claims['scope'] ?? []);
 
@@ -136,7 +137,7 @@ final class JwtAuthMiddleware implements MiddlewareInterface
      * @param list<string> $granted
      * @param list<string> $required
      */
-    private function hasRequiredScopes(array $granted, array $required): bool
+    private function hasRequiredScopes(#[\SensitiveParameter] array $granted, array $required): bool
     {
         foreach ($required as $requiredScope) {
             $matched = false;
@@ -155,7 +156,7 @@ final class JwtAuthMiddleware implements MiddlewareInterface
         return true;
     }
 
-    private function scopeMatches(string $required, string $granted): bool
+    private function scopeMatches(string $required, #[\SensitiveParameter] string $granted): bool
     {
         if ($required === $granted) {
             return true;
@@ -181,7 +182,7 @@ final class JwtAuthMiddleware implements MiddlewareInterface
     /**
      * @param array<string, mixed> $claims
      */
-    private function resolveSubject(array $claims): ?string
+    private function resolveSubject(#[\SensitiveParameter] array $claims): ?string
     {
         if (!array_key_exists('sub', $claims)) {
             return null;

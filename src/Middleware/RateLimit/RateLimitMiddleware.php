@@ -47,6 +47,7 @@ final class RateLimitMiddleware implements MiddlewareInterface
         $this->now = $now ?? static fn (): int => time();
     }
 
+    #[\Override]
     public function handle(RequestContext $context, callable $next): mixed
     {
         $key = ($this->keyResolver)($context);

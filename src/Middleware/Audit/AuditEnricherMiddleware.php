@@ -21,6 +21,7 @@ final class AuditEnricherMiddleware implements MiddlewareInterface
     ) {
     }
 
+    #[\Override]
     public function handle(RequestContext $context, callable $next): mixed
     {
         $extra = array_merge($this->fromAuth($context), $this->staticFields);
