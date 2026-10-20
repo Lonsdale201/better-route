@@ -4,7 +4,7 @@ The Composer package version and your REST namespace version are independent.
 Updating the library does not rename your `myapp/v1` routes. Treat changes to your
 own response schemas and permissions as changes to your application's API contract.
 
-## After 1.1.1 (unreleased)
+## 1.1.1 to 1.1.2
 
 - OpenAPI remains PHP 8.1-compatible and now validates generated documents in CI.
   PATCH operation IDs change from `...Update` to `...Patch` to distinguish them from
@@ -42,7 +42,9 @@ own response schemas and permissions as changes to your application's API contra
 - PHPStan analysis now has a 3 GB memory limit and at most two workers for the large
   WordPress/WooCommerce stubs. The runtime smoke job provisions disposable MySQL/WP/Woo.
 
-No package version was published and no production database migration is required.
+PHP minimum remains 8.1 and no new database migration is required. The planned later
+PHP 8.3 minimum is a separate development line. Keep existing 1.1.1 identity/idempotency
+rollout requirements when upgrading from an older version.
 
 ## 1.1.0 to 1.1.1
 

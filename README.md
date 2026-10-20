@@ -6,7 +6,7 @@ A thin PHP 8.1+ REST routing and resource library for WordPress.
 
 Built for headless and integration-heavy projects where you want a stable, versioned API contract on top of WP.
 
-Supports PHP 8.1+. Static analysis uses WordPress 6.9 and WooCommerce 10.9 stubs. WooCommerce support is optional. The 1.1.1 regression smoke was verified on WordPress 7.1.1, WooCommerce 11.1.1 and PHP 8.3.30 in HPOS and CPT modes; this does not imply every intermediate runtime combination was tested.
+Version 1.1.2 supports PHP 8.1+. Static analysis uses WordPress 6.9 and WooCommerce 10.9 stubs. WooCommerce is optional. CI tests PHP 8.1–8.4 and runs WordPress 6.9.4 / WooCommerce 10.9.4 service, Analytics and wire-schema checks on PHP 8.1/8.3 in HPOS and CPT modes. This does not establish every runtime/version combination. The later PHP 8.3 minimum development line is separate from 1.1.2.
 
 ## What It Gives You
 
@@ -511,7 +511,7 @@ checks after a successful install or migration. Product `price` is read-only;
 customer email and coupon code are required on create; nested order/customer
 fields reject unknown keys.
 
-### Configurable customer visibility (unreleased, #23)
+### Configurable customer visibility (1.1.2, #23)
 
 The default remains `customer` accounts. Configure one immutable policy per service
 or route registration when other roles are customer-like in your application:
@@ -542,7 +542,7 @@ after the SQL count, so such integrations must account for shorter pages/totals.
 Customer metadata rejects known WordPress authorization/session keys on writes and
 omits them on reads. Use an application metadata allowlist for third-party secrets.
 
-### Coupon management views (unreleased, #25)
+### Coupon management views (1.1.2, #25)
 
 Coupon lists support `sort=usage_count`, `sort=-usage_count`, `sort=date_expires`
 and their descending variants, with a deterministic ID tie-break. Non-expiring
@@ -570,7 +570,7 @@ modern empty `date_expires` overrides legacy data. State/expiry SQL normalizes a
 most 1000 distinct legacy values per query and reports
 `coupon_expiry_migration_required` (503) above that bound, without modifying data.
 
-### WooCommerce Analytics (unreleased, #24)
+### WooCommerce Analytics (1.1.2, #24)
 
 `BetterRoute::wooAnalyticsService()->report($report, $request)` is a read-only wrapper
 over fixed native `wc-analytics` reports. Register only the reports your application
@@ -678,9 +678,17 @@ using native WordPress Application Passwords.
 
 ## Current Status
 
-Stable line — 1.1. See [migration guidance](MIGRATING.md) before updating an existing deployment, especially one using idempotency or middleware-authenticated WordPress users.
+Stable release — 1.1.2, PHP 8.1+. See [migration guidance](MIGRATING.md) before updating an existing deployment, especially one using idempotency, custom customer roles or middleware-authenticated WordPress users.
 
 ## Changelog
+
+### 1.1.2 — 2026-10-20
+
+- Add configurable customer visibility shared across list/detail/mutations, with privileged-user exclusion and protected authorization/session metadata.
+- Add coupon state/status filters, numeric usage/expiry sorting and opt-in metadata. Block internal coupon metadata from invoking native setters; usage counts stay read-only.
+- Add twelve opt-in native Analytics reports with current-user permissions, bounded queries, comparison windows, historical import readiness and allowlisted decimal-money DTOs.
+- Harden OpenAPI 3.1 export: unique operation IDs (PATCH uses `...Patch`), nested local references, explicit security validation, correct empty maps, WP exclusive bounds, native error shapes and Analytics helper contracts.
+- Validate serialized documents and native wire responses in CI. Quality checks cover PHP 8.1–8.4; WP/Woo runtime checks cover PHP 8.1/8.3 and HPOS/CPT. Keep the PHP minimum at 8.1; no new database migration.
 
 ### 1.1.1 — 2026-09-21
 
