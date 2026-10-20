@@ -647,6 +647,13 @@ HTTP HEAD and inline 204/304 responses have no documented response body.
 
 ## Local Quality Commands
 
+GitHub CI runs for pull requests to `main` and again after a push to `main`.
+The quality matrix covers PHP 8.3, 8.4 and 8.5; the native WP/Woo jobs cover PHP
+8.3 and 8.5 with HPOS and CPT. All six checks are required before merging.
+Jobs use Ubuntu 24.04, bounded timeouts, a read-only repository token and
+Node.js 24 Actions pinned to full commit SHAs. Dependabot proposes weekly Action
+updates. Develop through short-lived PR branches; merged branches are deleted.
+
 ```bash
 composer test
 composer analyse
