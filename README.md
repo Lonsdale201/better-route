@@ -2,11 +2,11 @@
 
 [![OPEN BETTER-ROUTE DOCS](https://img.shields.io/badge/OPEN-BETTER--ROUTE%20DOCS-27AE60?style=for-the-badge&labelColor=2C3E50)](https://lonsdale201.github.io/better-docs/docs/better-route/getting-started/installation)
 
-A thin PHP 8.3+ REST routing and resource library for WordPress (unreleased development line).
+A thin PHP 8.3+ REST routing and resource library for WordPress.
 
 Built for headless and integration-heavy projects where you want a stable, versioned API contract on top of WP.
 
-Latest stable [1.1.2](https://github.com/Lonsdale201/better-route/releases/tag/v1.1.2) supports PHP 8.1+ and remains available on Packagist. This development branch requires PHP 8.3+. Static analysis uses WordPress 6.9 and WooCommerce 10.9 stubs. WooCommerce is optional. Development CI tests PHP 8.3–8.5 and runs WordPress 6.9.4 / WooCommerce 10.9.4 service, Analytics and wire-schema checks on PHP 8.3/8.5 in HPOS and CPT modes. This does not establish every runtime/version combination.
+Version 2.0 requires PHP 8.3+. The [1.1.3 security maintenance release](https://github.com/Lonsdale201/better-route/releases/tag/v1.1.3) retains PHP 8.1 compatibility and includes the same ownership fix. Static analysis uses WordPress 6.9 and WooCommerce 10.9 stubs. WooCommerce is optional. CI tests PHP 8.3–8.5 and runs WordPress 6.9.4 / WooCommerce 10.9.4 service, Analytics, ownership and wire-schema checks on PHP 8.3/8.5 in HPOS and CPT modes. This does not establish every runtime/version combination.
 
 ## What It Gives You
 
@@ -45,10 +45,15 @@ Latest stable [1.1.2](https://github.com/Lonsdale201/better-route/releases/tag/v
 Published on [Packagist](https://packagist.org/packages/better-route/better-route) — install with Composer:
 
 ```bash
-composer require better-route/better-route:^1.1
+composer require better-route/better-route:^2.0
+composer check-platform-reqs --no-dev
 ```
 
 Only add a VCS repository (pointing at this GitHub repo) if you need to track an unreleased branch or a fork. For local development you can still use a path repository + symlink.
+
+Read [migration guidance](MIGRATING.md) before changing an existing 1.x constraint.
+Public, portable consumer skills are available in
+[wp-agent-skills/better-route](https://github.com/Lonsdale201/wp-agent-skills/tree/main/better-route).
 
 ## Quick Start
 
@@ -610,7 +615,8 @@ dates and has no pagination/interval parameters. Stock has no date window.
 
 Responses contain `report`, allowlisted `data` and pagination `meta`; stats return
 `totals`/`intervals`, customer stats totals only, and collections return `items`.
-Currency values are decimal strings; fractional averages remain numeric. Native
+Currency values, including monetary averages, are decimal strings; non-monetary
+fractional averages remain numeric. Native
 links, raw customer contact fields and arbitrary extension properties are omitted.
 `meta.totalUnit` distinguishes intervals from collection items. Response collections
 and each segment list are limited to 100 entries; this bounds output, not upstream
@@ -686,9 +692,9 @@ using native WordPress Application Passwords.
 
 ## Current Status
 
-Latest stable release: 1.1.2, PHP 8.1+. This branch develops the next release with a PHP 8.3 minimum; it has no release tag yet. See [migration guidance](MIGRATING.md) before updating an existing deployment, especially one using idempotency, custom customer roles or middleware-authenticated WordPress users.
+Version 2.0.0, PHP 8.3+. See [migration guidance](MIGRATING.md) before updating an existing deployment, especially one using ownership policies, idempotency, custom customer roles or middleware-authenticated WordPress users.
 
-### PHP 8.3 hardening in development
+### PHP 8.3 hardening
 
 - `#[SensitiveParameter]` redacts annotated Better Route argument frames for secrets,
   credentials, JWT claims and single-use token context, including nested helpers and
@@ -710,12 +716,18 @@ than adding a redundant `json_validate()` call before `json_decode()`.
 
 ## Changelog
 
-### Unreleased — PHP 8.3 minimum
+### 2.0.0 — 2026-10-20
 
 - Require PHP 8.3 and test PHP 8.3–8.5; keep the published 1.1.2 release on PHP 8.1.
 - Redact sensitive library argument frames, including nested JWT/claims helpers.
 - Enforce interface overrides, readonly DTO classes and typed constant contracts.
 - Add regressions with exception argument collection enabled and class-loading checks.
+- Bind Resource ownership authorization to the same URL ID as the handler. Query/body
+  IDs cannot select a different authorization object. Add isolated regression tests
+  and native WordPress REST denial/no-side-effect checks for GET/PUT/PATCH/DELETE.
+- Pin Node 24 Actions to verified commits, require all six quality/runtime/schema
+  jobs before merge and run the same checks again on main. Propose Action updates
+  through Dependabot; delete merged branches automatically.
 
 ### 1.1.2 — 2026-10-20
 
