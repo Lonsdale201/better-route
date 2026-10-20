@@ -4,6 +4,29 @@ The Composer package version and your REST namespace version are independent.
 Updating the library does not rename your `myapp/v1` routes. Treat changes to your
 own response schemas and permissions as changes to your application's API contract.
 
+## 1.1.2 to 1.1.3
+
+Install the security patch while keeping PHP 8.1/8.2 support:
+
+```bash
+composer require better-route/better-route:^1.1.3
+composer check-platform-reqs
+```
+
+`OwnedResourcePolicy` now authorizes the URL-captured `id`, matching the Resource
+handler. On affected older versions, an authenticated caller could supply an owned
+query/body ID while targeting a different URL object. The impact depends on the
+configured repository and policy, particularly custom-table CRUD. Upgrade applications
+using this policy; arbitrary custom policies are not automatically repaired.
+
+For custom callbacks, resolve the target from `$request->get_url_params()['id']`
+instead of the merged `get_param('id')`. Keep authentication, action/field policies
+and list-query ownership filters in place. No database, cache-key or idempotency-key
+migration is introduced. Roll out the patch to all web and worker processes.
+
+Version 2.0 contains the same fix and additionally requires PHP 8.3. Select that
+major version deliberately after upgrading every runtime.
+
 ## 1.1.1 to 1.1.2
 
 - OpenAPI remains PHP 8.1-compatible and now validates generated documents in CI.

@@ -6,7 +6,7 @@ A thin PHP 8.1+ REST routing and resource library for WordPress.
 
 Built for headless and integration-heavy projects where you want a stable, versioned API contract on top of WP.
 
-Version 1.1.2 supports PHP 8.1+. Static analysis uses WordPress 6.9 and WooCommerce 10.9 stubs. WooCommerce is optional. CI tests PHP 8.1–8.4 and runs WordPress 6.9.4 / WooCommerce 10.9.4 service, Analytics and wire-schema checks on PHP 8.1/8.3 in HPOS and CPT modes. This does not establish every runtime/version combination. The later PHP 8.3 minimum development line is separate from 1.1.2.
+Version 1.1.3 supports PHP 8.1+ and fixes a Resource ownership authorization bypass present in 1.1.2. Static analysis uses WordPress 6.9 and WooCommerce 10.9 stubs. WooCommerce is optional. CI tests PHP 8.1–8.4 and runs WordPress 6.9.4 / WooCommerce 10.9.4 service, Analytics, ownership and wire-schema checks on PHP 8.1/8.3 in HPOS and CPT modes. This does not establish every runtime/version combination. Version 2.0 requires PHP 8.3; use 1.1.3 when retaining PHP 8.1/8.2.
 
 ## What It Gives You
 
@@ -678,9 +678,15 @@ using native WordPress Application Passwords.
 
 ## Current Status
 
-Stable release — 1.1.2, PHP 8.1+. See [migration guidance](MIGRATING.md) before updating an existing deployment, especially one using idempotency, custom customer roles or middleware-authenticated WordPress users.
+Stable maintenance release — 1.1.3, PHP 8.1+. See [migration guidance](MIGRATING.md) before updating an existing deployment, especially one using idempotency, custom customer roles or middleware-authenticated WordPress users. [Public integration skills](https://github.com/Lonsdale201/wp-agent-skills/tree/main/better-route) cover 2.0 and the 1.1.3 security backport.
 
 ## Changelog
+
+### 1.1.3 — 2026-10-20
+
+- Fix Resource ownership authorization to use the same URL ID as the handler. A conflicting query or body ID can no longer authorize a different object for detail, update or delete requests.
+- Preserve PHP 8.1 compatibility, existing constructors and database schemas. Custom application policies still need to resolve the actual URL object and enforce list visibility separately.
+- Add regression coverage and a 48-assertion native WordPress REST ownership smoke covering query, form and JSON ID collisions. Pin CI actions and bound workflow timeouts.
 
 ### 1.1.2 — 2026-10-20
 
