@@ -26,7 +26,10 @@ final class OpenApiRouteRegistrar
      *   serverUrl?: string,
      *   openapiVersion?: string,
      *   includeExcluded?: bool,
+     *   strictSchemas?: bool,
      *   components?: array<string, mixed>,
+     *   securitySchemes?: array<string, array<string, mixed>>,
+     *   globalSecurity?: list<array<string, list<string>>>,
      *   permissionCallback?: callable
      * } $options
      */
@@ -47,7 +50,7 @@ final class OpenApiRouteRegistrar
         $exporter = new OpenApiExporter();
 
         $router = Router::make($namespace['vendor'], $namespace['version']);
-        $router->get('/openapi.json', static function () use ($contractsProvider, $exporter, $options): array {
+        $router->get('/openapi\.json', static function () use ($contractsProvider, $exporter, $options): array {
             $contracts = $contractsProvider();
             if (!is_array($contracts)) {
                 throw new InvalidArgumentException('contractsProvider must return an array.');

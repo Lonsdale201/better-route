@@ -11,7 +11,7 @@ final class WooOpenApiComponents
      */
     public static function components(): array
     {
-        return [
+        $components = [
             'schemas' => [
                 'MetaDataEntry' => [
                     'type' => 'object',
@@ -19,7 +19,7 @@ final class WooOpenApiComponents
                     'properties' => [
                         'id' => ['type' => 'integer'],
                         'key' => ['type' => 'string'],
-                        'value' => [],
+                        'value' => true,
                     ],
                     'additionalProperties' => false,
                 ],
@@ -374,6 +374,7 @@ final class WooOpenApiComponents
                         'date_created' => ['type' => ['string', 'null'], 'format' => 'date-time'],
                         'date_modified' => ['type' => ['string', 'null'], 'format' => 'date-time'],
                         'date_expires' => ['type' => ['string', 'null'], 'format' => 'date-time'],
+                        'state' => ['type' => 'string', 'enum' => ['active', 'expired', 'exhausted', 'draft', 'scheduled'], 'readOnly' => true],
                         'usage_count' => ['type' => 'integer'],
                         'usage_limit' => ['type' => 'integer'],
                         'usage_limit_per_user' => ['type' => 'integer'],
@@ -440,5 +441,58 @@ final class WooOpenApiComponents
                 ],
             ],
         ];
+        $schemas = &$components['schemas'];
+        $schemas['MetaDataInput'] = [
+            'description' => 'Public custom metadata as key/value entries, a key/value map, or null. Protected keys and customer security/coupon internal keys are rejected.',
+            'anyOf' => [
+                ['type' => 'array', 'items' => ['$ref' => '#/components/schemas/MetaDataEntry']],
+                ['type' => 'object', 'additionalProperties' => true],
+                ['type' => 'null'],
+            ],
+        ];
+        foreach (['WooOrderInput', 'WooOrderLineItemInput', 'WooProductInput', 'WooCustomerInput', 'WooCouponInput'] as $name) {
+            $schemas[$name]['properties']['meta_data'] = ['$ref' => '#/components/schemas/MetaDataInput'];
+        }
+        $schemas['WooCustomerUpdateInput'] = $schemas['WooCustomerInput'];
+        unset($schemas['WooCustomerUpdateInput']['properties']['username']);
+        $schemas['WooCustomerUpdateInput']['minProperties'] = 1;
+        $schemas['WooCustomerInput']['properties']['password']['writeOnly'] = true;
+        $schemas['WooCustomerUpdateInput']['properties']['password']['writeOnly'] = true;
+        $coupon = &$schemas['WooCouponInput'];
+        $coupon['minProperties'] = 1;
+        $coupon['properties']['code']['minLength'] = 1;
+        $coupon['properties']['discount_type'] = ['type' => 'string', 'description' => 'A WooCommerce registered coupon discount type, including custom types.'];
+        $coupon['properties']['date_expires'] = ['type' => ['string', 'null'], 'description' => 'WooCommerce date string in the shop timezone, or empty string/null to clear.'];
+        foreach (['amount', 'minimum_amount', 'maximum_amount'] as $field) {
+            $coupon['properties'][$field] = ['anyOf' => [
+                ['type' => 'number', 'minimum' => 0],
+                ['type' => 'string', 'description' => 'Finite non-negative numeric string.'],
+            ]];
+        }
+        $integer = ['anyOf' => [['type' => 'integer', 'minimum' => 0], ['type' => 'string', 'pattern' => '^\\d+$']]];
+        foreach (['usage_limit', 'usage_limit_per_user', 'limit_usage_to_x_items'] as $field) {
+            $coupon['properties'][$field] = $integer;
+        }
+        $coupon['properties']['limit_usage_to_x_items']['anyOf'][] = ['type' => 'null'];
+        foreach (['product_ids', 'excluded_product_ids'] as $field) {
+            $coupon['properties'][$field]['items'] = $integer;
+        }
+        foreach (['individual_use', 'free_shipping', 'exclude_sale_items'] as $field) {
+            $coupon['properties'][$field] = ['anyOf' => [
+                ['type' => 'boolean'], ['type' => 'integer', 'enum' => [0, 1]],
+                ['type' => 'string', 'pattern' => '^\\s*(?:[Tt][Rr][Uu][Ee]|[Ff][Aa][Ll][Ss][Ee]|[Yy][Ee][Ss]|[Nn][Oo]|0|1)\\s*$'],
+            ]];
+        }
+        foreach (['WooCustomer', 'WooCoupon'] as $name) {
+            // Field projection can omit every field, including id.
+            $schemas[$name]['additionalProperties'] = false;
+            $schemas[$name]['properties']['meta_data']['description'] = 'Only present when explicitly requested; private/protected metadata is excluded.';
+            $meta = &$schemas[$name . 'ListResponse']['properties']['meta']['properties'];
+            $meta['page']['minimum'] = 1;
+            $meta['perPage']['minimum'] = 1;
+            $meta['total']['minimum'] = 0;
+        }
+        $schemas['WooCoupon']['properties']['usage_count']['readOnly'] = true;
+        return array_replace_recursive($components, WooAnalyticsOpenApi::components());
     }
 }

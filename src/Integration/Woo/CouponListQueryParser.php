@@ -25,16 +25,17 @@ final class CouponListQueryParser
      */
     public function __construct(
         array $allowedFields,
-        array $allowedSort = ['date_created', 'date_modified', 'id', 'code'],
+        array $allowedSort = ['date_created', 'date_modified', 'id', 'code', 'usage_count', 'date_expires'],
         ?array $defaultFields = null,
         private readonly int $defaultPerPage = 20,
         private readonly int $maxPerPage = 100
     ) {
         $this->allowedFields = array_values($allowedFields);
         $this->allowedSort = array_values($allowedSort);
-        $this->defaultFields = is_array($defaultFields) && $defaultFields !== []
+        $defaults = is_array($defaultFields) && $defaultFields !== []
             ? array_values($defaultFields)
             : $this->allowedFields;
+        $this->defaultFields = array_values(array_diff($defaults, ['meta_data']));
     }
 
     public function parse(mixed $request): CouponListQuery
@@ -48,6 +49,27 @@ final class CouponListQueryParser
         [$sortField, $sortDirection] = $this->parseSort($params['sort'] ?? null);
         $page = $this->parsePositiveInt($params['page'] ?? 1, 'page');
         $perPage = $this->parsePositiveInt($params['per_page'] ?? $this->defaultPerPage, 'per_page');
+        $state = $this->parseOptionalString($params['state'] ?? null, 'state');
+        if ($state !== null && !in_array($state, ['active', 'expiring', 'expired', 'exhausted', 'draft', 'scheduled'], true)) {
+            throw $this->validationError(['state' => ['unsupported coupon state']]);
+        }
+        $status = $this->parseOptionalString($params['status'] ?? null, 'status') ?? match ($state) {
+            'draft' => 'draft',
+            'scheduled' => 'future',
+            default => 'publish',
+        };
+        if (!in_array($status, ['publish', 'draft', 'future'], true)) {
+            throw $this->validationError(['status' => ['unsupported post status']]);
+        }
+        if ($state !== null && $status !== match ($state) {
+            'draft' => 'draft', 'scheduled' => 'future', default => 'publish'
+        }) {
+            throw $this->validationError(['status' => ['conflicts with state']]);
+        }
+        $expiringDays = $this->parsePositiveInt($params['expiring_days'] ?? 30, 'expiring_days');
+        if ($expiringDays > 3650) {
+            throw $this->validationError(['expiring_days' => ['max 3650']]);
+        }
 
         if ($perPage > $this->maxPerPage) {
             throw $this->validationError([
@@ -62,7 +84,10 @@ final class CouponListQueryParser
             sortField: $sortField,
             sortDirection: $sortDirection,
             page: $page,
-            perPage: $perPage
+            perPage: $perPage,
+            state: $state,
+            status: $status,
+            expiringDays: $expiringDays
         );
     }
 
@@ -89,7 +114,7 @@ final class CouponListQueryParser
     private function assertUnknownParams(array $params): void
     {
         $allowed = RestRequestParameters::allowedWithGlobals([
-            'fields', 'code', 'search', 'sort', 'page', 'per_page',
+            'fields', 'code', 'search', 'sort', 'page', 'per_page', 'state', 'status', 'expiring_days',
         ]);
         $unknown = array_values(array_filter(
             array_keys($params),

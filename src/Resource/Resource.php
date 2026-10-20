@@ -501,7 +501,7 @@ final class Resource
                 ->meta($meta)
                 ->permission($this->permissionForAction('update'));
             $router->patch('/' . $this->name . '/(?P<id>\d+)', $updateHandler)
-                ->meta($meta)
+                ->meta(array_replace($meta, ['operationId' => $this->resourceOperationId('patch')]))
                 ->permission($this->permissionForAction('update'));
         }
 
@@ -657,7 +657,7 @@ final class Resource
                 ->meta($meta)
                 ->permission($this->permissionForAction('update'));
             $router->patch('/' . $this->name . '/(?P<id>\d+)', $updateHandler)
-                ->meta($meta)
+                ->meta(array_replace($meta, ['operationId' => $this->resourceOperationId('patch')]))
                 ->permission($this->permissionForAction('update'));
         }
 

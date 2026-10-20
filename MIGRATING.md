@@ -4,6 +4,48 @@ The Composer package version and your REST namespace version are independent.
 Updating the library does not rename your `myapp/v1` routes. Treat changes to your
 own response schemas and permissions as changes to your application's API contract.
 
+## 1.1.1 to 1.1.2
+
+- OpenAPI remains PHP 8.1-compatible and now validates generated documents in CI.
+  PATCH operation IDs change from `...Update` to `...Patch` to distinguish them from
+  PUT. Regenerate clients if they consumed the previous duplicate IDs. Multiple Woo
+  registrations can supply `operationIdPrefix`.
+- Duplicate operations/IDs, equivalent path templates, malformed security and
+  undefined security schemes now raise configuration errors. Use strict schemas
+  before release, provide referenced components and exclude unsupported PCRE paths.
+  Runtime checks do not fetch external schema references or replace full validation.
+- Customer updates have a separate input schema without username. Metadata inputs
+  document list/map/null forms; coupon schemas allow registered custom discount types
+  and native date clearing. `ErrorResponse` describes native WordPress errors too.
+- Coupon internal metadata keys are rejected, preventing `meta_data.usage_count`
+  and other internal keys from invoking native setters. Use supported top-level
+  fields; usage counts remain read-only. Public custom metadata remains writable.
+- Empty Analytics metric maps serialize as JSON objects instead of arrays. Attach
+  `WooAnalyticsOpenApi::args()` and `::meta()` to manually registered report routes;
+  helper schemas are included in `wooOpenApiComponents()`.
+
+- Customer routes still default to the `customer` role, with stronger exclusion of
+  privileged multi-role accounts, direct administrative capabilities and super
+  administrators. Those objects can now return 404 where older code returned them.
+  Configure `CustomerRolePolicy` explicitly to include other customer-like roles.
+  `allowPrivilegedRoles: true` is a server-side opt-in; request filters cannot enable it.
+- Customer metadata writes reject known WordPress role/capability/session keys even
+  when they do not start with an underscore. Reads omit those keys. Review third-party
+  authorization metadata separately and apply an application allowlist.
+- Coupon default read DTOs gain `state` and omit `meta_data`. Trusted callers requiring
+  public plugin metadata must request the field explicitly. State is a management
+  summary, not a checkout-validity decision. Existing unfiltered lists remain published
+  coupons, including expired/exhausted coupons; filtering is opt-in.
+- Analytics is opt-in through `WooAnalyticsService`; existing registrar route sets are
+  unchanged. Native report capability and historical import coverage are mandatory.
+  The wrapper does not initialize imports or add a cross-user response cache.
+- PHPStan analysis now has a 3 GB memory limit and at most two workers for the large
+  WordPress/WooCommerce stubs. The runtime smoke job provisions disposable MySQL/WP/Woo.
+
+PHP minimum remains 8.1 and no new database migration is required. The planned later
+PHP 8.3 minimum is a separate development line. Keep existing 1.1.1 identity/idempotency
+rollout requirements when upgrading from an older version.
+
 ## 1.1.0 to 1.1.1
 
 This is a bug-fix release for existing APIs. It adds no Store API, cart, checkout,

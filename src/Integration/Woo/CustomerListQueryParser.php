@@ -28,7 +28,8 @@ final class CustomerListQueryParser
         array $allowedSort = ['registered_date', 'id', 'email', 'display_name'],
         ?array $defaultFields = null,
         private readonly int $defaultPerPage = 20,
-        private readonly int $maxPerPage = 100
+        private readonly int $maxPerPage = 100,
+        private readonly CustomerRolePolicy $rolePolicy = new CustomerRolePolicy()
     ) {
         $this->allowedFields = array_values($allowedFields);
         $this->allowedSort = array_values($allowedSort);
@@ -155,7 +156,7 @@ final class CustomerListQueryParser
     private function parseRole(mixed $rawRole): array
     {
         if ($rawRole === null || $rawRole === '') {
-            return ['customer'];
+            return $this->rolePolicy->narrow([]);
         }
 
         if (is_string($rawRole)) {
@@ -169,9 +170,10 @@ final class CustomerListQueryParser
         if (is_array($rawRole)) {
             $values = [];
             foreach ($rawRole as $role) {
-                if (is_string($role) && trim($role) !== '') {
-                    $values[] = trim($role);
+                if (!is_string($role) || trim($role) === '') {
+                    throw $this->validationError(['role' => ['must contain non-empty role strings']]);
                 }
+                $values[] = trim($role);
             }
 
             return $this->assertCustomerRoles(array_values($values));
@@ -186,22 +188,7 @@ final class CustomerListQueryParser
      */
     private function assertCustomerRoles(array $roles): array
     {
-        if ($roles === []) {
-            return ['customer'];
-        }
-
-        $invalid = array_values(array_filter(
-            $roles,
-            static fn (string $role): bool => $role !== 'customer'
-        ));
-
-        if ($invalid !== []) {
-            throw $this->validationError([
-                'role' => ['only customer role is allowed'],
-            ]);
-        }
-
-        return $roles;
+        return $this->rolePolicy->narrow($roles);
     }
 
     private function parseOptionalString(mixed $value, string $field): ?string

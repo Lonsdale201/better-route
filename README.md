@@ -6,7 +6,7 @@ A thin PHP 8.1+ REST routing and resource library for WordPress.
 
 Built for headless and integration-heavy projects where you want a stable, versioned API contract on top of WP.
 
-Supports PHP 8.1+. Static analysis uses WordPress 6.9 and WooCommerce 10.9 stubs. WooCommerce support is optional. The 1.1.1 regression smoke was verified on WordPress 7.1.1, WooCommerce 11.1.1 and PHP 8.3.30 in HPOS and CPT modes; this does not imply every intermediate runtime combination was tested.
+Version 1.1.2 supports PHP 8.1+. Static analysis uses WordPress 6.9 and WooCommerce 10.9 stubs. WooCommerce is optional. CI tests PHP 8.1–8.4 and runs WordPress 6.9.4 / WooCommerce 10.9.4 service, Analytics and wire-schema checks on PHP 8.1/8.3 in HPOS and CPT modes. This does not establish every runtime/version combination. The later PHP 8.3 minimum development line is separate from 1.1.2.
 
 ## What It Gives You
 
@@ -286,10 +286,17 @@ WordPress configuration. Neither silently falls back to a racy read/modify/write
 export or replace them with a persistent backend for cross-request totals. Audit and
 metric sink failures are best-effort and never change the API response.
 
-## OpenAPI (MVP)
+## OpenAPI 3.1
 
-The library already stores route/resource metadata for OpenAPI.  
-You can export a document from contracts and optionally expose it as a REST endpoint.
+Export route/resource contracts as OpenAPI 3.1 JSON and optionally expose the document
+as a protected REST endpoint. CI validates serialized documents and representative DTOs,
+including native WooCommerce responses, against their schemas. The runtime library
+keeps its PHP 8.1 minimum and has no validator dependency.
+
+Applications supply custom handler schemas and actual authentication schemes. Named
+WordPress captures (including balanced nested groups) become path parameters; regex
+outside captures that cannot be represented as literal OpenAPI paths is rejected.
+Exclude such routes with `meta.openapi.include = false`.
 
 ### Manual export from contracts
 
@@ -382,6 +389,51 @@ location. Resource create/update responses are `{ "data": ... }` envelopes, so
 strict component sets should provide `<Resource>Response` in addition to
 `<Resource>`, `<Resource>Input`, and `<Resource>ListResponse`.
 
+Use `strictSchemas => true` before release. It checks local JSON-pointer references,
+including nested schemas and reusable components. Compatibility mode (the default)
+still inserts placeholders for missing direct schema-component references; it does
+not establish that application schemas are complete. External references and JSON
+Schema anchors are not fetched/resolved by the runtime checks. Validate the final
+application document with a full OpenAPI 3.1 validator as well.
+
+Duplicate method/path pairs, equivalent templated paths, duplicate operation IDs,
+malformed security requirements and undefined security schemes fail explicitly.
+PUT retains its `...Update` ID; PATCH has a separate `...Patch` ID. Multiple Woo
+registrations can set `operationIdPrefix` to keep generated client method names unique.
+Explicit parameter metadata preserves `style` and `explode`. Query/path/cookie names
+remain case-sensitive; header names are merged case-insensitively. Summary,
+description and deprecated metadata are emitted as standard operation fields.
+
+`security: []` documents a public operation; omission inherits the document default.
+`[{}]` allows an anonymous alternative. These are documentation settings:
+`protectedByMiddleware()` still requires authentication and authorization middleware.
+The OpenAPI endpoint defaults to `manage_options`; publishing it publicly also
+publishes included application metadata.
+
+### Analytics contracts
+
+Analytics endpoints remain explicitly registered by the application. Attach the
+report-specific helper to document supported parameters and bounded response DTOs:
+
+```php
+use BetterRoute\Integration\Woo\WooAnalyticsOpenApi;
+use BetterRoute\Integration\Woo\WooAnalyticsService;
+
+$analytics = new WooAnalyticsService();
+$router->get('/analytics/orders/stats', fn ($request) => $analytics->report('orders/stats', $request))
+    ->args(WooAnalyticsOpenApi::args('orders/stats'))
+    ->meta(WooAnalyticsOpenApi::meta('orders/stats'))
+    ->permission(fn () => current_user_can('view_woocommerce_reports'));
+```
+
+Merge `BetterRoute::wooOpenApiComponents()` into export options; it includes all 12
+report schemas. Describe the application's real authentication scheme separately.
+Responses are `{report, data, meta, comparison?}` without an extra envelope. Money
+uses decimal strings, averages can be fractional, empty metric maps serialize as
+`{}`, and comparisons do not recursively contain comparisons. Date parameters accept
+shop-local datetimes with optional offsets, so their schemas use a pattern rather
+than incorrectly requiring RFC3339 offsets.
+
 ## WooCommerce HPOS Integration (Optional)
 
 The library can register WooCommerce routes as an optional integration layer.  
@@ -459,7 +511,123 @@ checks after a successful install or migration. Product `price` is read-only;
 customer email and coupon code are required on create; nested order/customer
 fields reject unknown keys.
 
+### Configurable customer visibility (1.1.2, #23)
+
+The default remains `customer` accounts. Configure one immutable policy per service
+or route registration when other roles are customer-like in your application:
+
+```php
+use BetterRoute\Integration\Woo\CustomerRolePolicy;
+use BetterRoute\Integration\Woo\WooCustomerService;
+
+$policy = new CustomerRolePolicy(['customer', 'subscriber', 'wholesale_customer']);
+$service = new WooCustomerService($policy);
+// Or pass 'customerRoles' => $policy to wooRouteRegistrar()->register(...).
+```
+
+`role=subscriber`, comma-separated slugs and role arrays only narrow that policy.
+Omitting the filter selects all configured roles. List, get, update and delete use
+the same visibility rule; constructing a query DTO directly cannot widen it.
+Accounts with administrative roles/capabilities, including multi-role accounts and
+multisite super administrators, are excluded unless the server explicitly sets
+`allowPrivilegedRoles: true`. Explicit capability denials are conservatively excluded
+too, matching WordPress user-query semantics. `excludedRoles` adds explicit exclusions.
+Configuration never changes user roles. Creation still creates a customer and is
+denied if the policy excludes `customer`; native create/edit/delete user checks remain.
+Explicitly requested `orders_count` and `total_spent` work for other allowed roles.
+
+Role and stored capability exclusions run before counting/pagination. Arbitrary
+dynamic `user_has_cap` filters also run in the object guard; they can remove rows
+after the SQL count, so such integrations must account for shorter pages/totals.
+Customer metadata rejects known WordPress authorization/session keys on writes and
+omits them on reads. Use an application metadata allowlist for third-party secrets.
+
+### Coupon management views (1.1.2, #25)
+
+Coupon lists support `sort=usage_count`, `sort=-usage_count`, `sort=date_expires`
+and their descending variants, with a deterministic ID tie-break. Non-expiring
+coupons sort last in either direction. Filters execute before counting/pagination:
+
+| Parameter | Values / behavior |
+| --- | --- |
+| `state` | `active`, `expiring`, `expired`, `exhausted`, `draft`, `scheduled` |
+| `status` | Native post status `publish` (default), `draft`, `future` |
+| `expiring_days` | 1..3650, default 30; next N times 24 hours |
+
+Draft/scheduled states select their corresponding post status. Conflicting state
+and status filters fail validation. Published state precedence is expired, then
+exhausted, then active. Expiring is the active subset with a nonzero expiry inside
+the window. Expiry equality remains active, matching WooCommerce; usage limit 0
+means unlimited. The derived read-only `state` is included in default DTOs. This is
+an administrative summary; shopper limits, reserved uses and cart rules still apply
+at checkout. Non-published, non-future detail objects are classified as draft.
+
+`meta_data` is absent from all default field sets, including a directly constructed
+parser. Request `fields=id,meta_data` explicitly only for trusted clients. Underscore
+keys remain hidden; other plugin metadata may still contain sensitive information.
+Legacy `expiry_date` values use native Woo date parsing in the shop timezone;
+modern empty `date_expires` overrides legacy data. State/expiry SQL normalizes at
+most 1000 distinct legacy values per query and reports
+`coupon_expiry_migration_required` (503) above that bound, without modifying data.
+
+### WooCommerce Analytics (1.1.2, #24)
+
+`BetterRoute::wooAnalyticsService()->report($report, $request)` is a read-only wrapper
+over fixed native `wc-analytics` reports. Register only the reports your application
+needs, inside `rest_api_init`, with your existing authentication middleware:
+
+```php
+$analytics = BetterRoute::wooAnalyticsService();
+$router = BetterRoute::router('myapp', 'v1');
+$router->get('/analytics/revenue', static function ($request) use ($analytics) {
+    return new \BetterRoute\Http\Response(
+        $analytics->report('revenue/stats', $request),
+        200,
+        ['Cache-Control' => 'private, no-store']
+    );
+})->permission(static fn (): bool => current_user_can('view_woocommerce_reports'));
+$router->register();
+```
+
+Reports: `revenue/stats`, `orders/stats`, `products`, `products/stats`, `categories`,
+`customers`, `customers/stats`, `coupons`, `coupons/stats`, `taxes`, `stock`, `variations`.
+The service always requires native `view_woocommerce_reports`, preserves the current
+user and runs the upstream REST permission checks. Stock retains its extra native
+product permissions. It performs no HTTP loopback, user elevation, imports or wrapper
+caching. Authentication must establish the native WP user; route intent alone does
+not authenticate anyone. Add application rate limits for staff reporting workloads.
+
+Queries use ISO8601 `after`/`before` datetimes, defaulting to the last seven days in
+the shop timezone. Explicit offsets are converted to that timezone. Windows are
+ordered and at most 366 days, or 31 days for hourly intervals. `page` is 1..10000 and
+`per_page` is 1..100. `interval` is hour/day/week/month/quarter/year only where the
+native report supports it. `orderby`/`order` and `segmentby` use fixed report-specific
+allowlists; unsupported parameters (including `_fields`, `context` and cache-refresh
+bypasses) fail validation. Customers stats maps the date window to registration
+dates and has no pagination/interval parameters. Stock has no date window.
+`compare_after` and `compare_before` add one independently validated comparison window.
+
+Responses contain `report`, allowlisted `data` and pagination `meta`; stats return
+`totals`/`intervals`, customer stats totals only, and collections return `items`.
+Currency values are decimal strings; fractional averages remain numeric. Native
+links, raw customer contact fields and arbitrary extension properties are omitted.
+`meta.totalUnit` distinguishes intervals from collection items. Response collections
+and each segment list are limited to 100 entries; this bounds output, not upstream
+grouping cost. Comparisons return a second result in `comparison`.
+
+Analytics must be enabled and its native import status available. Unknown, running,
+incomplete or insufficient historical coverage returns `analytics_data_not_ready`
+(503), for both windows. Initialize/import Analytics through WooCommerce before use.
+`meta.readiness=idle` describes the native import state, not a guarantee of realtime
+synchronization. Stock does not depend on import readiness. Disabled analytics and
+unavailable native reports produce sanitized 503 errors; permissions produce 403.
+
 ## Error Contract
+
+Better Route handler errors use the envelope below. WordPress may reject authentication,
+permissions or native argument validation before the handler runs; these responses
+retain its `{code, message, data}` shape. The OpenAPI `ErrorResponse` accepts both.
+HTTP HEAD and inline 204/304 responses have no documented response body.
 
 ```json
 {
@@ -482,13 +650,45 @@ fields reject unknown keys.
 composer test
 composer analyse
 composer cs-check
+php tests/openapi/export.php /tmp/better-route-openapi.json
+python -m pip install -r tests/openapi/requirements.txt
+python tests/openapi/validate.py /tmp/better-route-openapi.json
 ```
+
+The CI workflow also installs disposable WordPress 6.9.4 / WooCommerce 10.9.4 and runs
+the service/Analytics smoke suites on PHP 8.1 and 8.3, with HPOS and CPT storage.
+Both runtime jobs validate synthetic native responses against the exported schemas.
+`BR_OPENAPI_SAMPLE_DIR` optionally captures smoke-only samples outside the webroot;
+use it exclusively with disposable synthetic data. A separate OpenAPI job validates
+empty exports, CPT/table CRUD, authentication contracts and positive/negative inputs.
+To reproduce on a **disposable database only**, install/activate WooCommerce, set
+the desired storage option, run `WC_Install::create_tables()`, then execute:
+
+```bash
+wp eval "require '/absolute/path/better-route/tests/smoke/woo-services-smoke.php';"
+wp eval "require '/absolute/path/better-route/tests/smoke/woo-analytics-smoke.php';"
+```
+
+These fixtures create/delete synthetic users, roles, coupons, products and orders.
+Mail/HTTP are blocked during execution. Analytics lookup rows are populated with
+native Woo import methods; import-readiness states use request-local controlled
+providers. The suites do not validate a complete background import or external
+identity provider. HTTP authentication was separately checked on local loopback
+using native WordPress Application Passwords.
 
 ## Current Status
 
-Stable line — 1.1. See [migration guidance](MIGRATING.md) before updating an existing deployment, especially one using idempotency or middleware-authenticated WordPress users.
+Stable release — 1.1.2, PHP 8.1+. See [migration guidance](MIGRATING.md) before updating an existing deployment, especially one using idempotency, custom customer roles or middleware-authenticated WordPress users.
 
 ## Changelog
+
+### 1.1.2 — 2026-10-20
+
+- Add configurable customer visibility shared across list/detail/mutations, with privileged-user exclusion and protected authorization/session metadata.
+- Add coupon state/status filters, numeric usage/expiry sorting and opt-in metadata. Block internal coupon metadata from invoking native setters; usage counts stay read-only.
+- Add twelve opt-in native Analytics reports with current-user permissions, bounded queries, comparison windows, historical import readiness and allowlisted decimal-money DTOs.
+- Harden OpenAPI 3.1 export: unique operation IDs (PATCH uses `...Patch`), nested local references, explicit security validation, correct empty maps, WP exclusive bounds, native error shapes and Analytics helper contracts.
+- Validate serialized documents and native wire responses in CI. Quality checks cover PHP 8.1–8.4; WP/Woo runtime checks cover PHP 8.1/8.3 and HPOS/CPT. Keep the PHP minimum at 8.1; no new database migration.
 
 ### 1.1.1 — 2026-09-21
 

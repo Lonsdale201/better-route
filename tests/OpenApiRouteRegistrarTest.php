@@ -32,7 +32,7 @@ final class OpenApiRouteRegistrarTest extends TestCase
         );
 
         self::assertCount(1, $dispatcher->registrations);
-        self::assertSame('/openapi.json', $dispatcher->registrations[0]['route']->uri);
+        self::assertSame('/openapi\.json', $dispatcher->registrations[0]['route']->uri);
         self::assertSame('GET', $dispatcher->registrations[0]['route']->method);
         self::assertFalse((bool) $dispatcher->registrations[0]['route']->meta['openapi']['include']);
         self::assertFalse((bool) ($dispatcher->registrations[0]['permissionCallback'])(new OpenApiRegistrarFakeRequest([])));

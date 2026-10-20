@@ -37,11 +37,13 @@ final class WooRouteRegistrar
      * @param array{
      *   requireHpos?: bool,
      *   basePath?: string,
+     *   operationIdPrefix?: string,
      *   defaultPerPage?: int,
      *   maxPerPage?: int,
      *   deleteMode?: string,
      *   register?: bool,
      *   permissions?: array<string, mixed>,
+     *   customerRoles?: CustomerRolePolicy,
      *   actions?: array{orders?: list<string>, products?: list<string>, customers?: list<string>, coupons?: list<string>},
      *   idempotency?: array{
      *     enabled?: bool,
@@ -69,6 +71,11 @@ final class WooRouteRegistrar
         $defaultPerPage = max(1, (int) ($options['defaultPerPage'] ?? 20));
         $maxPerPage = max($defaultPerPage, (int) ($options['maxPerPage'] ?? 100));
         $deleteMode = $this->resolveDeleteMode($options['deleteMode'] ?? null);
+        $customerPolicy = $options['customerRoles'] ?? $this->customerService->rolePolicy;
+        if (!$customerPolicy instanceof CustomerRolePolicy) {
+            throw new \InvalidArgumentException('customerRoles must be a CustomerRolePolicy.');
+        }
+        $customerService = new WooCustomerService($customerPolicy);
         $permissions = is_array($options['permissions'] ?? null) ? $options['permissions'] : [];
         $actions = is_array($options['actions'] ?? null) ? $options['actions'] : [];
         $idempotency = $this->resolveIdempotencyOptions($options['idempotency'] ?? null);
@@ -133,10 +140,11 @@ final class WooRouteRegistrar
         );
 
         $customerListParser = new CustomerListQueryParser(
-            allowedFields: $this->customerService->allowedFields(),
-            defaultFields: $this->customerService->listDefaultFields(),
+            allowedFields: $customerService->allowedFields(),
+            defaultFields: $customerService->listDefaultFields(),
             defaultPerPage: $defaultPerPage,
-            maxPerPage: $maxPerPage
+            maxPerPage: $maxPerPage,
+            rolePolicy: $customerPolicy
         );
 
         $couponListParser = new CouponListQueryParser(
@@ -256,7 +264,7 @@ final class WooRouteRegistrar
                 ->permission($this->resolvePermissionCallback($permissions['orders.update'] ?? 'manage_woocommerce'));
             $patchBuilder = $router->patch($basePath . '/orders/(?P<id>\d+)', $updateOrder)
                 ->args(['id' => ['required' => true, 'type' => 'integer']])
-                ->meta($meta)
+                ->meta(array_replace($meta, ['operationId' => 'wooOrdersPatch']))
                 ->permission($this->resolvePermissionCallback($permissions['orders.update'] ?? 'manage_woocommerce'));
 
             if ($ordersUpdateIdempotency !== null) {
@@ -398,7 +406,7 @@ final class WooRouteRegistrar
                 ->permission($this->resolvePermissionCallback($permissions['products.update'] ?? 'manage_woocommerce'));
             $patchBuilder = $router->patch($basePath . '/products/(?P<id>\d+)', $updateProduct)
                 ->args(['id' => ['required' => true, 'type' => 'integer']])
-                ->meta($meta)
+                ->meta(array_replace($meta, ['operationId' => 'wooProductsPatch']))
                 ->permission($this->resolvePermissionCallback($permissions['products.update'] ?? 'manage_woocommerce'));
 
             if ($productsUpdateIdempotency !== null) {
@@ -432,9 +440,9 @@ final class WooRouteRegistrar
         // --- Customers ---
 
         if (in_array('list', $customerActions, true)) {
-            $router->get($basePath . '/customers', function (mixed $request) use ($customerListParser): array {
+            $router->get($basePath . '/customers', function (mixed $request) use ($customerListParser, $customerService): array {
                 $query = $customerListParser->parse($request);
-                $result = $this->customerService->list($query);
+                $result = $customerService->list($query);
 
                 return [
                     'data' => $result['items'],
@@ -444,9 +452,14 @@ final class WooRouteRegistrar
                         'total' => $result['total'],
                     ],
                 ];
-            })->args($this->customerListArgs())
+            })->args($this->customerListArgs($defaultPerPage, $maxPerPage))
                 ->meta([
                     'operationId' => 'wooCustomersList',
+                    'parameters' => [[
+                        'in' => 'query', 'name' => 'role', 'style' => 'form', 'explode' => false,
+                        'description' => 'Configured role subset; privileged-role protection also applies.',
+                        'schema' => ['type' => ['string', 'array'], 'items' => ['type' => 'string', 'enum' => $customerPolicy->narrow([])]],
+                    ]],
                     'tags' => ['WooCustomers'],
                     'responseSchema' => '#/components/schemas/WooCustomerListResponse',
                 ])
@@ -454,11 +467,11 @@ final class WooRouteRegistrar
         }
 
         if (in_array('get', $customerActions, true)) {
-            $router->get($basePath . '/customers/(?P<id>\d+)', function (mixed $request): array {
+            $router->get($basePath . '/customers/(?P<id>\d+)', function (mixed $request) use ($customerService): array {
                 $this->assertAllowedParams($request, ['id', 'fields']);
                 $id = $this->readId($request);
-                $fields = $this->parseFieldsParameter($request, $this->customerService->allowedFields(), $this->customerService->getDefaultFields());
-                $item = $this->customerService->get($id, $fields);
+                $fields = $this->parseFieldsParameter($request, $customerService->allowedFields(), $customerService->getDefaultFields());
+                $item = $customerService->get($id, $fields);
                 if ($item === null) {
                     throw new ApiException('Resource not found.', 404, 'not_found');
                 }
@@ -487,9 +500,9 @@ final class WooRouteRegistrar
                 'responseSchema' => '#/components/schemas/WooCustomerResponse',
             ], $customersCreateIdempotency !== null, (bool) $idempotency['requireKey']);
 
-            $builder = $router->post($basePath . '/customers', function (mixed $request): Response {
+            $builder = $router->post($basePath . '/customers', function (mixed $request) use ($customerService): Response {
                 $payload = $this->readPayload($request);
-                $item = $this->customerService->create($payload, $this->customerService->getDefaultFields());
+                $item = $customerService->create($payload, $customerService->getDefaultFields());
                 return new Response(['data' => $item], 201);
             })
                 ->meta($customerCreateMeta)
@@ -501,10 +514,10 @@ final class WooRouteRegistrar
         }
 
         if (in_array('update', $customerActions, true)) {
-            $updateCustomer = function (mixed $request): array {
+            $updateCustomer = function (mixed $request) use ($customerService): array {
                 $id = $this->readId($request);
                 $payload = $this->readPayload($request);
-                $item = $this->customerService->update($id, $payload, $this->customerService->getDefaultFields());
+                $item = $customerService->update($id, $payload, $customerService->getDefaultFields());
                 if ($item === null) {
                     throw new ApiException('Resource not found.', 404, 'not_found');
                 }
@@ -518,7 +531,7 @@ final class WooRouteRegistrar
                 'parameters' => [
                     ['in' => 'path', 'name' => 'id', 'required' => true, 'schema' => ['type' => 'integer']],
                 ],
-                'requestSchema' => '#/components/schemas/WooCustomerInput',
+                'requestSchema' => '#/components/schemas/WooCustomerUpdateInput',
                 'responseSchema' => '#/components/schemas/WooCustomerResponse',
             ], $customersUpdateIdempotency !== null, (bool) $idempotency['requireKey']);
 
@@ -528,7 +541,7 @@ final class WooRouteRegistrar
                 ->permission($this->resolvePermissionCallback($permissions['customers.update'] ?? 'manage_woocommerce'));
             $patchBuilder = $router->patch($basePath . '/customers/(?P<id>\d+)', $updateCustomer)
                 ->args(['id' => ['required' => true, 'type' => 'integer']])
-                ->meta($customerUpdateMeta)
+                ->meta(array_replace($customerUpdateMeta, ['operationId' => 'wooCustomersPatch']))
                 ->permission($this->resolvePermissionCallback($permissions['customers.update'] ?? 'manage_woocommerce'));
 
             if ($customersUpdateIdempotency !== null) {
@@ -538,9 +551,9 @@ final class WooRouteRegistrar
         }
 
         if (in_array('delete', $customerActions, true)) {
-            $router->delete($basePath . '/customers/(?P<id>\d+)', function (mixed $request): array {
+            $router->delete($basePath . '/customers/(?P<id>\d+)', function (mixed $request) use ($customerService): array {
                 $id = $this->readId($request);
-                $deleted = $this->customerService->delete($id);
+                $deleted = $customerService->delete($id);
                 if (!$deleted) {
                     throw new ApiException('Resource not found.', 404, 'not_found');
                 }
@@ -573,7 +586,7 @@ final class WooRouteRegistrar
                         'total' => $result['total'],
                     ],
                 ];
-            })->args($this->couponListArgs())
+            })->args($this->couponListArgs($defaultPerPage, $maxPerPage))
                 ->meta([
                     'operationId' => 'wooCouponsList',
                     'tags' => ['WooCoupons'],
@@ -657,7 +670,7 @@ final class WooRouteRegistrar
                 ->permission($this->resolvePermissionCallback($permissions['coupons.update'] ?? 'manage_woocommerce'));
             $patchBuilder = $router->patch($basePath . '/coupons/(?P<id>\d+)', $updateCoupon)
                 ->args(['id' => ['required' => true, 'type' => 'integer']])
-                ->meta($couponUpdateMeta)
+                ->meta(array_replace($couponUpdateMeta, ['operationId' => 'wooCouponsPatch']))
                 ->permission($this->resolvePermissionCallback($permissions['coupons.update'] ?? 'manage_woocommerce'));
 
             if ($couponsUpdateIdempotency !== null) {
@@ -685,6 +698,16 @@ final class WooRouteRegistrar
                     'responseSchema' => '#/components/schemas/DeleteResponse',
                 ])
                 ->permission($this->resolvePermissionCallback($permissions['coupons.delete'] ?? 'manage_woocommerce'));
+        }
+
+        $prefix = $options['operationIdPrefix'] ?? '';
+        if (!is_string($prefix)) {
+            throw new \InvalidArgumentException('operationIdPrefix must be a string.');
+        }
+        if ($prefix !== '') {
+            foreach ($router->routes() as $index => $route) {
+                $router->mergeRouteMeta($index, ['operationId' => $prefix . ucfirst((string) $route->meta['operationId'])]);
+            }
         }
 
         if (($options['register'] ?? true) !== false) {
@@ -1025,32 +1048,43 @@ final class WooRouteRegistrar
     /**
      * @return array<string, array<string, mixed>>
      */
-    private function customerListArgs(): array
+    private function customerListArgs(int $defaultPerPage, int $maxPerPage): array
     {
         return [
             'fields' => ['required' => false, 'type' => 'string'],
-            'role' => ['required' => false, 'type' => 'string'],
+            'role' => ['required' => false, 'description' => 'Allowed role slug, comma-separated slugs, or array; narrows the configured policy.'],
             'email' => ['required' => false, 'type' => 'string'],
             'search' => ['required' => false, 'type' => 'string'],
-            'sort' => ['required' => false, 'type' => 'string'],
-            'page' => ['required' => false, 'type' => 'integer'],
-            'per_page' => ['required' => false, 'type' => 'integer'],
+            'sort' => ['required' => false, 'type' => 'string', 'enum' => $this->sortValues(['registered_date', 'id', 'email', 'display_name']), 'default' => '-registered_date'],
+            'page' => ['required' => false, 'type' => 'integer', 'minimum' => 1, 'default' => 1],
+            'per_page' => ['required' => false, 'type' => 'integer', 'minimum' => 1, 'maximum' => $maxPerPage, 'default' => $defaultPerPage],
         ];
     }
 
     /**
      * @return array<string, array<string, mixed>>
      */
-    private function couponListArgs(): array
+    private function couponListArgs(int $defaultPerPage, int $maxPerPage): array
     {
         return [
             'fields' => ['required' => false, 'type' => 'string'],
+            'state' => ['required' => false, 'type' => 'string', 'enum' => ['', 'active', 'expiring', 'expired', 'exhausted', 'draft', 'scheduled']],
+            'status' => ['required' => false, 'type' => 'string', 'enum' => ['', 'publish', 'draft', 'future']],
+            'expiring_days' => ['required' => false, 'type' => 'integer', 'minimum' => 1, 'maximum' => 3650],
             'code' => ['required' => false, 'type' => 'string'],
             'search' => ['required' => false, 'type' => 'string'],
-            'sort' => ['required' => false, 'type' => 'string'],
-            'page' => ['required' => false, 'type' => 'integer'],
-            'per_page' => ['required' => false, 'type' => 'integer'],
+            'sort' => ['required' => false, 'type' => 'string', 'enum' => $this->sortValues(['date_created', 'date_modified', 'id', 'code', 'usage_count', 'date_expires']), 'default' => '-date_created'],
+            'page' => ['required' => false, 'type' => 'integer', 'minimum' => 1, 'default' => 1],
+            'per_page' => ['required' => false, 'type' => 'integer', 'minimum' => 1, 'maximum' => $maxPerPage, 'default' => $defaultPerPage],
         ];
+    }
+
+    /** @param list<string> $fields
+     * @return list<string>
+     */
+    private function sortValues(array $fields): array
+    {
+        return array_merge([''], $fields, array_map(static fn (string $field): string => '-' . $field, $fields));
     }
 
     /**

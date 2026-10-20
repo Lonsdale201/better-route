@@ -4,6 +4,7 @@ declare(strict_types=1);
 
 namespace BetterRoute;
 
+use BetterRoute\Integration\Woo\WooAnalyticsService;
 use BetterRoute\Integration\Woo\WooOpenApiComponents;
 use BetterRoute\Integration\Woo\WooRouteRegistrar;
 use BetterRoute\OpenApi\OpenApiExporter;
@@ -24,6 +25,11 @@ final class BetterRoute
     public static function wooRouteRegistrar(): WooRouteRegistrar
     {
         return new WooRouteRegistrar();
+    }
+
+    public static function wooAnalyticsService(): WooAnalyticsService
+    {
+        return new WooAnalyticsService();
     }
 
     /**

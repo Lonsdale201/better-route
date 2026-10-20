@@ -37,6 +37,9 @@ final class OpenApiExporter
         $description = $this->stringOrNull($options['description'] ?? null);
         $serverUrl = $this->stringOrDefault($options['serverUrl'] ?? null, '/wp-json');
         $openApiVersion = $this->stringOrDefault($options['openapiVersion'] ?? null, '3.1.0');
+        if (preg_match('/^3\.1\.\d+$/D', $openApiVersion) !== 1) {
+            throw new InvalidArgumentException('This exporter supports OpenAPI 3.1 only.');
+        }
         $includeExcluded = ($options['includeExcluded'] ?? false) === true;
         $strictSchemas = ($options['strictSchemas'] ?? false) === true;
 
@@ -44,6 +47,8 @@ final class OpenApiExporter
         $paths = [];
         /** @var array<string, bool> $referencedSchemas */
         $referencedSchemas = [];
+        $operationIds = [];
+        $templates = [];
 
         foreach ($contracts as $contract) {
             $meta = $contract['meta'];
@@ -62,7 +67,20 @@ final class OpenApiExporter
                 $contract['path']
             );
 
-            $paths[$openApiPath][$method] = $this->operationFromContract($contract, $meta, $method, $openApiPath);
+            $shape = preg_replace('/\{[^}]+\}/', '{}', $openApiPath);
+            if (isset($templates[$shape]) && $templates[$shape] !== $openApiPath) {
+                throw new InvalidArgumentException('Equivalent OpenAPI path templates: ' . $openApiPath);
+            }
+            $templates[$shape] = $openApiPath;
+            if (isset($paths[$openApiPath][$method])) {
+                throw new InvalidArgumentException('Duplicate OpenAPI operation: ' . $method . ' ' . $openApiPath);
+            }
+            $operation = $this->operationFromContract($contract, $meta, $method, $openApiPath);
+            if (isset($operationIds[$operation['operationId']])) {
+                throw new InvalidArgumentException('Duplicate OpenAPI operationId "' . $operation['operationId'] . '". Set unique route operationId metadata.');
+            }
+            $operationIds[$operation['operationId']] = true;
+            $paths[$openApiPath][$method] = $operation;
             $this->collectSchemaRef($meta['requestSchema'] ?? null, $referencedSchemas);
             $this->collectSchemaRef($meta['responseSchema'] ?? null, $referencedSchemas);
             $this->collectSchemaRefsFromResponses(
@@ -78,7 +96,7 @@ final class OpenApiExporter
         unset($operations);
 
         $securitySchemes = is_array($options['securitySchemes'] ?? null) ? $options['securitySchemes'] : [];
-        $globalSecurity = is_array($options['globalSecurity'] ?? null) ? $options['globalSecurity'] : [];
+        $globalSecurity = $this->normalizeSecurity($options['globalSecurity'] ?? null, []) ?? [];
 
         $components = $this->components(
             is_array($options['components'] ?? null) ? $options['components'] : [],
@@ -96,7 +114,7 @@ final class OpenApiExporter
             'servers' => [
                 ['url' => $serverUrl],
             ],
-            'paths' => $paths,
+            'paths' => $paths !== [] ? $paths : (object) [],
             'components' => $components,
         ];
 
@@ -108,6 +126,8 @@ final class OpenApiExporter
             $document['security'] = $globalSecurity;
         }
 
+        $document = OpenApiDocumentValidator::prepare($document);
+        OpenApiDocumentValidator::validate($document, $strictSchemas);
         return $document;
     }
 
@@ -133,6 +153,11 @@ final class OpenApiExporter
             'operationId' => $operationId,
             'responses' => $this->responses($method, $meta),
         ];
+        foreach (['summary', 'description', 'deprecated'] as $key) {
+            if (array_key_exists($key, $meta)) {
+                $operation[$key] = $meta[$key];
+            }
+        }
 
         $tags = $this->stringList($meta['tags'] ?? []);
         if ($tags !== []) {
@@ -213,10 +238,17 @@ final class OpenApiExporter
             ],
         ];
 
-        return array_replace(
+        $responses = array_replace(
             $defaults,
             $this->normalizeResponses(is_array($meta['responses'] ?? null) ? $meta['responses'] : [])
         );
+        if ($method === 'head') {
+            foreach ($responses as &$definition) {
+                unset($definition['content']);
+            }
+            unset($definition);
+        }
+        return $responses;
     }
 
     /**
@@ -240,17 +272,20 @@ final class OpenApiExporter
             $schema = [];
 
             $type = $definition['type'] ?? null;
-            if (is_string($type) && in_array($type, ['array', 'boolean', 'integer', 'number', 'object', 'string'], true)) {
+            if (is_array($type) && $type !== [] && array_is_list($type) && count(array_filter($type, static fn (mixed $item): bool => is_string($item) && in_array($item, ['array', 'boolean', 'integer', 'number', 'object', 'string', 'null'], true))) === count($type)) {
+                $schema['type'] = $type;
+            } elseif (is_string($type) && in_array($type, ['array', 'boolean', 'integer', 'number', 'object', 'string'], true)) {
                 $schema['type'] = $type;
             } else {
                 $schema['type'] = 'string';
             }
 
-            foreach (['default', 'enum', 'format', 'items', 'minimum', 'maximum', 'minLength', 'maxLength', 'pattern'] as $key) {
+            foreach (['default', 'enum', 'format', 'items', 'minimum', 'maximum', 'exclusiveMinimum', 'exclusiveMaximum', 'minLength', 'maxLength', 'pattern', 'minItems', 'maxItems', 'uniqueItems', 'multipleOf', 'properties', 'additionalProperties', 'oneOf', 'anyOf', 'allOf'] as $key) {
                 if (array_key_exists($key, $definition)) {
                     $schema[$key] = $definition[$key];
                 }
             }
+            $schema = $this->wordPressSchema($schema);
 
             $parameter = [
                 'in' => $isPath ? 'path' : 'query',
@@ -283,8 +318,9 @@ final class OpenApiExporter
         $merged = [];
 
         foreach (array_merge($derived, $explicit) as $parameter) {
-            $key = strtolower((string) ($parameter['in'] ?? 'query'))
-                . ':' . strtolower((string) ($parameter['name'] ?? ''));
+            $location = (string) ($parameter['in'] ?? 'query');
+            $name = (string) ($parameter['name'] ?? '');
+            $key = $location . ':' . ($location === 'header' ? strtolower($name) : $name);
             if ($key === 'query:') {
                 continue;
             }
@@ -293,6 +329,40 @@ final class OpenApiExporter
         }
 
         return array_values($merged);
+    }
+
+    /** @param array<string, mixed> $schema
+     * @return array<string, mixed>
+     */
+    private function wordPressSchema(array $schema): array
+    {
+        foreach (['Minimum' => 'minimum', 'Maximum' => 'maximum'] as $suffix => $bound) {
+            $key = 'exclusive' . $suffix;
+            if (is_bool($schema[$key] ?? null)) {
+                if ($schema[$key] === true) {
+                    if (!is_int($schema[$bound] ?? null) && !is_float($schema[$bound] ?? null)) {
+                        throw new InvalidArgumentException('WordPress exclusive bound requires ' . $bound . '.');
+                    }
+                    $schema[$key] = $schema[$bound];
+                    unset($schema[$bound]);
+                } else {
+                    unset($schema[$key]);
+                }
+            }
+        }
+        foreach (['items', 'additionalProperties'] as $key) {
+            if (is_array($schema[$key] ?? null)) {
+                $schema[$key] = $this->wordPressSchema($schema[$key]);
+            }
+        }
+        foreach (['properties', 'allOf', 'anyOf', 'oneOf'] as $key) {
+            foreach (is_array($schema[$key] ?? null) ? $schema[$key] : [] as $name => $child) {
+                if (is_array($child)) {
+                    $schema[$key][$name] = $this->wordPressSchema($child);
+                }
+            }
+        }
+        return $schema;
     }
 
     /**
@@ -313,7 +383,7 @@ final class OpenApiExporter
                 continue;
             }
 
-            if (!preg_match('/^(default|[1-5][0-9]{2})$/', $code)) {
+            if (!preg_match('/^(default|[1-5](?:[0-9]{2}|XX))$/D', $code)) {
                 continue;
             }
 
@@ -325,6 +395,9 @@ final class OpenApiExporter
                     : 'Response';
             }
 
+            if (in_array($code, ['204', '304'], true)) {
+                unset($entry['content']);
+            }
             $normalized[$code] = $entry;
         }
 
@@ -411,6 +484,11 @@ final class OpenApiExporter
             if ($description !== null && $description !== '') {
                 $result['description'] = $description;
             }
+            foreach (['style', 'explode', 'allowReserved', 'deprecated', 'example', 'examples'] as $key) {
+                if (array_key_exists($key, $parameter)) {
+                    $result[$key] = $parameter[$key];
+                }
+            }
 
             $normalized[] = $result;
         }
@@ -426,6 +504,9 @@ final class OpenApiExporter
     {
         $known = [
             'operationId',
+            'summary',
+            'description',
+            'deprecated',
             'tags',
             'scopes',
             'security',
@@ -460,6 +541,16 @@ final class OpenApiExporter
     ): array {
         $base = [
             'schemas' => [
+                'WordPressError' => [
+                    'type' => 'object',
+                    'required' => ['code', 'message', 'data'],
+                    'properties' => [
+                        'code' => ['type' => 'string'],
+                        'message' => ['type' => 'string'],
+                        'data' => true,
+                        'additional_errors' => ['type' => 'array', 'items' => ['type' => 'object']],
+                    ],
+                ],
                 'Error' => [
                     'type' => 'object',
                     'required' => ['error'],
@@ -472,8 +563,10 @@ final class OpenApiExporter
                                 'message' => ['type' => 'string'],
                                 'requestId' => ['type' => 'string'],
                                 'details' => [
-                                    'type' => 'object',
-                                    'additionalProperties' => true,
+                                    'anyOf' => [
+                                        ['type' => 'object', 'additionalProperties' => true],
+                                        ['type' => 'array', 'maxItems' => 0],
+                                    ],
                                 ],
                             ],
                         ],
@@ -486,7 +579,10 @@ final class OpenApiExporter
                     'content' => [
                         'application/json' => [
                             'schema' => [
-                                '$ref' => '#/components/schemas/Error',
+                                'oneOf' => [
+                                    ['$ref' => '#/components/schemas/Error'],
+                                    ['$ref' => '#/components/schemas/WordPressError'],
+                                ],
                             ],
                         ],
                     ],
@@ -550,6 +646,12 @@ final class OpenApiExporter
         }
 
         $schemaName = substr($value, strlen($prefix));
+        // Only component-root references need compatibility placeholders.
+        // Nested JSON pointers are checked by the complete local-ref traversal.
+        if (str_contains($schemaName, '/')) {
+            return;
+        }
+        $schemaName = str_replace(['~1', '~0'], ['/', '~'], rawurldecode($schemaName));
         if ($schemaName !== '') {
             $target[$schemaName] = true;
         }
@@ -588,13 +690,7 @@ final class OpenApiExporter
 
     private function toOpenApiPath(string $namespace, string $path): string
     {
-        $trimmedNamespace = trim($namespace, '/');
-        $trimmedPath = trim($path, '/');
-
-        $convertedPath = preg_replace('/\(\?P<([a-zA-Z0-9_]+)>[^)]+\)/', '{$1}', $trimmedPath) ?? $trimmedPath;
-        $joined = trim($trimmedNamespace . '/' . $convertedPath, '/');
-
-        return '/' . $joined;
+        return OpenApiPath::fromRoute($namespace, $path);
     }
 
     private function fallbackOperationSuffix(string $openApiPath): string
@@ -606,41 +702,40 @@ final class OpenApiExporter
 
     /**
      * @param list<string> $scopes
-     * @return list<array<string, list<string>>>|null
+     * @return list<array<string, list<string>>|\stdClass>|null
      */
     private function normalizeSecurity(mixed $security, array $scopes): ?array
     {
-        if (is_array($security)) {
-            if ($security === []) {
-                return [];
+        if ($security === null) {
+            return null;
+        }
+        if (is_string($security) && $security !== '') {
+            $security = [[$security => $scopes]];
+        }
+        if (!is_array($security) || !array_is_list($security)) {
+            throw new InvalidArgumentException('OpenAPI security must be a list of requirement objects.');
+        }
+        $normalized = [];
+        foreach ($security as $requirement) {
+            if (is_object($requirement) && $requirement instanceof \stdClass) {
+                $requirement = get_object_vars($requirement);
             }
-
-            $normalized = [];
-            foreach ($security as $entry) {
-                if (is_array($entry)) {
-                    $requirement = [];
-                    foreach ($entry as $schemeName => $schemeScopes) {
-                        if (is_string($schemeName) && $schemeName !== '') {
-                            $requirement[$schemeName] = is_array($schemeScopes)
-                                ? array_values(array_filter($schemeScopes, 'is_string'))
-                                : [];
-                        }
-                    }
-
-                    if ($requirement !== []) {
-                        $normalized[] = $requirement;
+            if (!is_array($requirement) || ($requirement !== [] && array_is_list($requirement))) {
+                throw new InvalidArgumentException('Invalid OpenAPI security requirement object.');
+            }
+            foreach ($requirement as $name => $values) {
+                if (!is_string($name) || $name === '' || !is_array($values) || !array_is_list($values)) {
+                    throw new InvalidArgumentException('Invalid OpenAPI security scheme/scopes.');
+                }
+                foreach ($values as $value) {
+                    if (!is_string($value) || $value === '') {
+                        throw new InvalidArgumentException('OpenAPI security scope/role names must be non-empty strings.');
                     }
                 }
             }
-
-            return $normalized !== [] ? $normalized : null;
+            $normalized[] = $requirement !== [] ? $requirement : (object) [];
         }
-
-        if (is_string($security) && $security !== '') {
-            return [[$security => $scopes]];
-        }
-
-        return null;
+        return $normalized;
     }
 
     /**
