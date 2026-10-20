@@ -91,8 +91,8 @@ jobs:
           --health-cmd="mysqladmin ping -h localhost -pfixture_root"
           --health-interval=10s --health-timeout=5s --health-retries=12
     env:
-      WP_CLI_CACHE_DIR: ${{ runner.temp }}/wp-cli-cache
-      WP_PATH: ${{ runner.temp }}/wordpress
+      WP_CLI_CACHE_DIR: /tmp/better-route-wp-cli-cache
+      WP_PATH: /tmp/better-route-wordpress
     steps:
       - uses: actions/checkout@v4
         with:
