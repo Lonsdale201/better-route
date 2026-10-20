@@ -65,12 +65,26 @@ final class OwnedResourcePolicy
 
     private static function resourceId(mixed $request): int
     {
-        if (is_object($request) && method_exists($request, 'get_param')) {
-            return max(0, (int) $request->get_param('id'));
+        // Match Resource::readId(): authorize the URL object that the handler uses.
+        $raw = null;
+        if (is_object($request) && method_exists($request, 'get_url_params')) {
+            $params = $request->get_url_params();
+            if (is_array($params) && array_key_exists('id', $params)) {
+                $raw = $params['id'];
+            }
         }
 
-        if (is_array($request)) {
-            return max(0, (int) ($request['id'] ?? 0));
+        if ($raw === null && is_object($request) && method_exists($request, 'get_param')) {
+            $raw = $request->get_param('id');
+        } elseif (is_array($request) && isset($request['id'])) {
+            $raw = $request['id'];
+        }
+
+        if (is_int($raw) && $raw > 0) {
+            return $raw;
+        }
+        if (is_string($raw) && ctype_digit($raw) && (int) $raw > 0) {
+            return (int) $raw;
         }
 
         return 0;

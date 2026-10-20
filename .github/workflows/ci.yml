@@ -123,6 +123,7 @@ jobs:
           wp plugin install woocommerce --path="$WP_PATH" --version=10.9.4 --activate
       - name: Validate services and analytics in HPOS and CPT modes
         run: |
+          wp eval "require '$GITHUB_WORKSPACE/tests/smoke/ownership-smoke.php';" --path="$WP_PATH"
           for mode in yes no; do
             wp option update woocommerce_custom_orders_table_enabled "$mode" --path="$WP_PATH"
             wp eval 'WC_Install::create_tables();' --path="$WP_PATH"
