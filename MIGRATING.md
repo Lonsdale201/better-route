@@ -4,11 +4,19 @@ The Composer package version and your REST namespace version are independent.
 Updating the library does not rename your `myapp/v1` routes. Treat changes to your
 own response schemas and permissions as changes to your application's API contract.
 
-## 1.1.2 to the unreleased PHP 8.3 development line
+## 1.1.2 / 1.1.3 to 2.0.0
 
-The published 1.1.2 tag remains PHP 8.1-compatible. The next development line requires
+The 1.1.3 security maintenance release remains PHP 8.1-compatible and fixes the
+ownership authorization issue also corrected in 2.0. Version 2.0 requires
 PHP 8.3 in Composer and in every web, CLI, cron and worker process. Upgrade the runtime
-before installing it. The minimum-version change is not part of the 1.1.2 release.
+before installing it. An existing `^1.1` Composer constraint does not select 2.0;
+change it deliberately to `^2.0` and check real platform requirements. Composer's
+`config.platform` setting does not upgrade web/worker PHP.
+
+- Resource ownership policies now authorize the same URL capture as the handler,
+  preventing merged query/body IDs from changing the authorization object. On older
+  releases, use an explicit URL-bound policy until this fix is installed. Keep list
+  visibility, field policies and native user authentication checks in place.
 
 - Request/response, route and Woo query/policy DTOs are readonly classes. Their
   constructors and declared properties are unchanged, but attaching undeclared
@@ -20,10 +28,19 @@ before installing it. The minimum-version change is not part of the 1.1.2 releas
   production error-display restrictions and logging redaction in place.
 - Interface implementations are checked with `#[Override]`; constant names and values
   are unchanged. There is no storage-schema, cache-key or idempotency-key migration
-  in this development change.
+  in this release.
 
-No next release number or publication date has been assigned. CI for this branch
-targets PHP 8.3–8.5, with native WP/Woo checks on PHP 8.3/8.5 and both order stores.
+CI targets PHP 8.3–8.5, with native WP/Woo checks on PHP 8.3/8.5 and both order stores.
+The ownership smoke separately exercises native REST dispatch with query, form and
+JSON IDs. No migration of stored business data is required by this fix.
+
+## 1.1.2 to 1.1.3 (PHP 8.1 maintenance)
+
+Use `composer require better-route/better-route:^1.1.3` when retaining PHP 8.1/8.2.
+`OwnedResourcePolicy` now binds authorization to the URL object ID used by the
+handler. Conflicting query/body IDs cannot select a different authorization object.
+Custom policies must also use URL captures, and list ownership remains a separate
+query constraint. No data migration or constructor change is required.
 
 ## 1.1.1 to 1.1.2
 
