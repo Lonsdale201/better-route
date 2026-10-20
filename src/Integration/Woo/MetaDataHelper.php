@@ -11,6 +11,40 @@ final class MetaDataHelper
     /**
      * @return list<array{key: string, value: mixed}>
      */
+    public static function normalizeCustomerIncoming(mixed $metaData): array
+    {
+        $normalized = self::normalizeIncoming($metaData);
+        foreach ($normalized as $index => $entry) {
+            if (self::isCustomerSecurityKey($entry['key'])) {
+                throw new ApiException('Invalid request.', 400, 'validation_failed', [
+                    'fieldErrors' => ['meta_data.' . $index . '.key' => ['security-sensitive customer meta keys are not writable']],
+                ]);
+            }
+        }
+        return $normalized;
+    }
+
+    /**
+     * @return list<array{key: string, value: mixed, id?: int}>
+     */
+    public static function serializeCustomer(mixed $metaData): array
+    {
+        return array_values(array_filter(
+            self::serialize($metaData),
+            static fn (array $entry): bool => !self::isCustomerSecurityKey($entry['key'])
+        ));
+    }
+
+    private static function isCustomerSecurityKey(string $key): bool
+    {
+        $normalized = strtolower(trim($key));
+        return preg_match('/(?:capabilities|user_level|session_tokens|application_passwords)$/D', $normalized) === 1
+            || in_array($normalized, ['role', 'roles', 'user_pass', 'user_activation_key', 'primary_blog', 'active_blog', 'source_domain', 'spam', 'deleted', 'use_ssl'], true);
+    }
+
+    /**
+     * @return list<array{key: string, value: mixed}>
+     */
     public static function normalizeIncoming(mixed $metaData, string $field = 'meta_data', bool $allowProtected = false): array
     {
         if ($metaData === null) {

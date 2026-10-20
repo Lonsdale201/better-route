@@ -8,6 +8,10 @@ use BetterRoute\Http\ApiException;
 
 final class WooCustomerService
 {
+    public function __construct(public readonly CustomerRolePolicy $rolePolicy = new CustomerRolePolicy())
+    {
+    }
+
     /** @var list<string> */
     private const ALLOWED_FIELDS = [
         'id',
@@ -119,9 +123,7 @@ final class WooCustomerService
             'orderby' => $this->stableSort($query->sortField, $query->sortDirection),
         ];
 
-        if ($query->role !== []) {
-            $args['role__in'] = $query->role;
-        }
+        $args = array_merge($args, $this->rolePolicy->queryArgs($query->role));
 
         if ($query->email !== null && $query->email !== '') {
             $args['search'] = $query->email;
@@ -178,6 +180,9 @@ final class WooCustomerService
     public function create(array $payload, array $fields): array
     {
         $this->assertWooFunctions();
+        if (!in_array('customer', $this->rolePolicy->narrow([]), true)) {
+            throw new ApiException('Customer creation is disabled by the role policy.', 403, 'forbidden');
+        }
         $this->assertPayloadKeys($payload);
         $this->assertCurrentUserCan('create_users');
 
@@ -264,7 +269,7 @@ final class WooCustomerService
         }
 
         if (array_key_exists('meta_data', $payload)) {
-            MetaDataHelper::normalizeIncoming($payload['meta_data']);
+            MetaDataHelper::normalizeCustomerIncoming($payload['meta_data']);
         }
     }
 
@@ -318,7 +323,7 @@ final class WooCustomerService
                 'avatar_url' => $this->getAvatarUrl($customer),
                 'orders_count' => method_exists($customer, 'get_order_count') ? (int) $customer->get_order_count() : 0,
                 'total_spent' => method_exists($customer, 'get_total_spent') ? (string) $customer->get_total_spent() : '0',
-                'meta_data' => method_exists($customer, 'get_meta_data') ? MetaDataHelper::serialize($customer->get_meta_data()) : [],
+                'meta_data' => method_exists($customer, 'get_meta_data') ? MetaDataHelper::serializeCustomer($customer->get_meta_data()) : [],
                 default => null,
             };
         }
@@ -360,7 +365,7 @@ final class WooCustomerService
         }
 
         if (array_key_exists('meta_data', $payload)) {
-            $metaData = MetaDataHelper::normalizeIncoming($payload['meta_data']);
+            $metaData = MetaDataHelper::normalizeCustomerIncoming($payload['meta_data']);
             MetaDataHelper::applyToTarget($customer, $metaData);
         }
     }
@@ -426,7 +431,9 @@ final class WooCustomerService
         }
     }
 
-    /** @return list<string> */
+    /**
+     * @return list<string>
+     */
     private function addressFields(): array
     {
         return [
@@ -481,21 +488,7 @@ final class WooCustomerService
 
     private function isCustomerUser(int $id): bool
     {
-        if (!function_exists('get_userdata')) {
-            return true;
-        }
-
-        $user = get_userdata($id);
-        if (!is_object($user)) {
-            return false;
-        }
-
-        $roles = $user->roles;
-        if (!is_array($roles)) {
-            return false;
-        }
-
-        return in_array('customer', $roles, true);
+        return $this->rolePolicy->isVisible($id);
     }
 
     private function assertCurrentUserCan(string $capability, mixed ...$args): void
@@ -542,7 +535,9 @@ final class WooCustomerService
         };
     }
 
-    /** @return array<string, string> */
+    /**
+     * @return array<string, string>
+     */
     private function stableSort(string $field, string $direction): array
     {
         $mapped = $this->mapSortField($field);

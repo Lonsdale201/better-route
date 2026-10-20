@@ -36,7 +36,7 @@
   },
   "scripts": {
     "test": "php vendor/bin/phpunit -c phpunit.xml.dist",
-    "analyse": "php -d memory_limit=1G vendor/bin/phpstan analyse",
+    "analyse": "php -d memory_limit=3G vendor/bin/phpstan analyse --memory-limit=3G",
     "cs-fix": "php vendor/bin/php-cs-fixer fix --config=.php-cs-fixer.php",
     "cs-check": "php vendor/bin/php-cs-fixer fix --dry-run --diff --config=.php-cs-fixer.php"
   },

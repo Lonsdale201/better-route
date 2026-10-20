@@ -374,6 +374,7 @@ final class WooOpenApiComponents
                         'date_created' => ['type' => ['string', 'null'], 'format' => 'date-time'],
                         'date_modified' => ['type' => ['string', 'null'], 'format' => 'date-time'],
                         'date_expires' => ['type' => ['string', 'null'], 'format' => 'date-time'],
+                        'state' => ['type' => 'string', 'enum' => ['active', 'expired', 'exhausted', 'draft', 'scheduled'], 'readOnly' => true],
                         'usage_count' => ['type' => 'integer'],
                         'usage_limit' => ['type' => 'integer'],
                         'usage_limit_per_user' => ['type' => 'integer'],

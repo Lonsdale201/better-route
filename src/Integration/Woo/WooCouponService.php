@@ -18,6 +18,7 @@ final class WooCouponService
         'date_created',
         'date_modified',
         'date_expires',
+        'state',
         'usage_count',
         'usage_limit',
         'usage_limit_per_user',
@@ -41,6 +42,7 @@ final class WooCouponService
         'discount_type',
         'date_created',
         'date_expires',
+        'state',
         'usage_count',
         'usage_limit',
     ];
@@ -55,6 +57,7 @@ final class WooCouponService
         'date_created',
         'date_modified',
         'date_expires',
+        'state',
         'usage_count',
         'usage_limit',
         'usage_limit_per_user',
@@ -67,7 +70,6 @@ final class WooCouponService
         'maximum_amount',
         'email_restrictions',
         'exclude_sale_items',
-        'meta_data',
     ];
 
     /** @var list<string> */
@@ -126,6 +128,13 @@ final class WooCouponService
     public function list(CouponListQuery $query): array
     {
         $this->assertWooFunctions();
+        $query = (new CouponListQueryParser($this->allowedFields(), maxPerPage: 1000))->parse([
+            'fields' => implode(',', $query->fields), 'code' => $query->code, 'search' => $query->search,
+            'sort' => ($query->sortDirection === 'DESC' ? '-' : '') . $query->sortField,
+            'page' => $query->page, 'per_page' => $query->perPage, 'state' => $query->state,
+            'status' => $query->status, 'expiring_days' => $query->expiringDays,
+        ]);
+        $now = time();
 
         $args = [
             'posts_per_page' => $query->perPage,
@@ -133,24 +142,23 @@ final class WooCouponService
             'orderby' => $this->stableSort($query->sortField),
             'order' => $query->sortDirection,
             'post_type' => 'shop_coupon',
-            'post_status' => 'publish',
+            'post_status' => $query->status,
         ];
-
-        if ($query->code !== null && $query->code !== '') {
-            // Resolve through the coupon lookup so code normalization
-            // (wc_format_coupon_code) and the coupon cache apply, instead of a
-            // collation-dependent post-title match.
-            $couponId = function_exists('wc_get_coupon_id_by_code')
-                ? (int) wc_get_coupon_id_by_code($query->code)
-                : 0;
-            $args['post__in'] = [$couponId > 0 ? $couponId : 0];
-        }
 
         if ($query->search !== null && $query->search !== '') {
             $args['s'] = $query->search;
         }
 
-        $wpQuery = new \WP_Query($args);
+        $wpQuery = new \WP_Query();
+        $filter = static function (array $clauses, \WP_Query $candidate) use ($wpQuery, $query, $now): array {
+            return $candidate === $wpQuery ? CouponQueryFilters::apply($clauses, $query, $now) : $clauses;
+        };
+        add_filter('posts_clauses', $filter, 20, 2);
+        try {
+            $wpQuery->query($args);
+        } finally {
+            remove_filter('posts_clauses', $filter, 20);
+        }
         $posts = $wpQuery->posts;
         $total = (int) $wpQuery->found_posts;
 
@@ -164,7 +172,7 @@ final class WooCouponService
 
                 $coupon = $this->loadCoupon($postId);
                 if ($coupon !== null) {
-                    $items[] = $this->mapCoupon($coupon, $query->fields);
+                    $items[] = $this->mapCoupon($coupon, $query->fields, $now);
                 }
             }
         }
@@ -384,7 +392,7 @@ final class WooCouponService
      * @param list<string> $fields
      * @return array<string, mixed>
      */
-    private function mapCoupon(object $coupon, array $fields): array
+    private function mapCoupon(object $coupon, array $fields, ?int $now = null): array
     {
         $row = [];
 
@@ -398,6 +406,7 @@ final class WooCouponService
                 'date_created' => method_exists($coupon, 'get_date_created') ? $this->dateToAtom($coupon->get_date_created()) : null,
                 'date_modified' => method_exists($coupon, 'get_date_modified') ? $this->dateToAtom($coupon->get_date_modified()) : null,
                 'date_expires' => method_exists($coupon, 'get_date_expires') ? $this->dateToAtom($coupon->get_date_expires()) : null,
+                'state' => $this->state($coupon, $now ?? time()),
                 'usage_count' => method_exists($coupon, 'get_usage_count') ? (int) $coupon->get_usage_count() : 0,
                 'usage_limit' => method_exists($coupon, 'get_usage_limit') ? (int) $coupon->get_usage_limit() : 0,
                 'usage_limit_per_user' => method_exists($coupon, 'get_usage_limit_per_user') ? (int) $coupon->get_usage_limit_per_user() : 0,
@@ -689,6 +698,23 @@ final class WooCouponService
         }
 
         return $coupon;
+    }
+
+    private function state(object $coupon, int $now): string
+    {
+        $status = get_post_status((int) $coupon->get_id());
+        if ($status !== 'publish' && $status !== 'future') {
+            return 'draft';
+        }
+        if ($status === 'future') {
+            return 'scheduled';
+        }
+        $expiry = $coupon->get_date_expires('edit');
+        if ($expiry !== null && $expiry->getTimestamp() < $now) {
+            return 'expired';
+        }
+        $limit = (int) $coupon->get_usage_limit('edit');
+        return $limit > 0 && (int) $coupon->get_usage_count('edit') >= $limit ? 'exhausted' : 'active';
     }
 
     private function mapSortField(string $field): string

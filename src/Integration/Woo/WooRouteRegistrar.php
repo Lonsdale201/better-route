@@ -42,6 +42,7 @@ final class WooRouteRegistrar
      *   deleteMode?: string,
      *   register?: bool,
      *   permissions?: array<string, mixed>,
+     *   customerRoles?: CustomerRolePolicy,
      *   actions?: array{orders?: list<string>, products?: list<string>, customers?: list<string>, coupons?: list<string>},
      *   idempotency?: array{
      *     enabled?: bool,
@@ -69,6 +70,11 @@ final class WooRouteRegistrar
         $defaultPerPage = max(1, (int) ($options['defaultPerPage'] ?? 20));
         $maxPerPage = max($defaultPerPage, (int) ($options['maxPerPage'] ?? 100));
         $deleteMode = $this->resolveDeleteMode($options['deleteMode'] ?? null);
+        $customerPolicy = $options['customerRoles'] ?? $this->customerService->rolePolicy;
+        if (!$customerPolicy instanceof CustomerRolePolicy) {
+            throw new \InvalidArgumentException('customerRoles must be a CustomerRolePolicy.');
+        }
+        $customerService = new WooCustomerService($customerPolicy);
         $permissions = is_array($options['permissions'] ?? null) ? $options['permissions'] : [];
         $actions = is_array($options['actions'] ?? null) ? $options['actions'] : [];
         $idempotency = $this->resolveIdempotencyOptions($options['idempotency'] ?? null);
@@ -133,10 +139,11 @@ final class WooRouteRegistrar
         );
 
         $customerListParser = new CustomerListQueryParser(
-            allowedFields: $this->customerService->allowedFields(),
-            defaultFields: $this->customerService->listDefaultFields(),
+            allowedFields: $customerService->allowedFields(),
+            defaultFields: $customerService->listDefaultFields(),
             defaultPerPage: $defaultPerPage,
-            maxPerPage: $maxPerPage
+            maxPerPage: $maxPerPage,
+            rolePolicy: $customerPolicy
         );
 
         $couponListParser = new CouponListQueryParser(
@@ -432,9 +439,9 @@ final class WooRouteRegistrar
         // --- Customers ---
 
         if (in_array('list', $customerActions, true)) {
-            $router->get($basePath . '/customers', function (mixed $request) use ($customerListParser): array {
+            $router->get($basePath . '/customers', function (mixed $request) use ($customerListParser, $customerService): array {
                 $query = $customerListParser->parse($request);
-                $result = $this->customerService->list($query);
+                $result = $customerService->list($query);
 
                 return [
                     'data' => $result['items'],
@@ -454,11 +461,11 @@ final class WooRouteRegistrar
         }
 
         if (in_array('get', $customerActions, true)) {
-            $router->get($basePath . '/customers/(?P<id>\d+)', function (mixed $request): array {
+            $router->get($basePath . '/customers/(?P<id>\d+)', function (mixed $request) use ($customerService): array {
                 $this->assertAllowedParams($request, ['id', 'fields']);
                 $id = $this->readId($request);
-                $fields = $this->parseFieldsParameter($request, $this->customerService->allowedFields(), $this->customerService->getDefaultFields());
-                $item = $this->customerService->get($id, $fields);
+                $fields = $this->parseFieldsParameter($request, $customerService->allowedFields(), $customerService->getDefaultFields());
+                $item = $customerService->get($id, $fields);
                 if ($item === null) {
                     throw new ApiException('Resource not found.', 404, 'not_found');
                 }
@@ -487,9 +494,9 @@ final class WooRouteRegistrar
                 'responseSchema' => '#/components/schemas/WooCustomerResponse',
             ], $customersCreateIdempotency !== null, (bool) $idempotency['requireKey']);
 
-            $builder = $router->post($basePath . '/customers', function (mixed $request): Response {
+            $builder = $router->post($basePath . '/customers', function (mixed $request) use ($customerService): Response {
                 $payload = $this->readPayload($request);
-                $item = $this->customerService->create($payload, $this->customerService->getDefaultFields());
+                $item = $customerService->create($payload, $customerService->getDefaultFields());
                 return new Response(['data' => $item], 201);
             })
                 ->meta($customerCreateMeta)
@@ -501,10 +508,10 @@ final class WooRouteRegistrar
         }
 
         if (in_array('update', $customerActions, true)) {
-            $updateCustomer = function (mixed $request): array {
+            $updateCustomer = function (mixed $request) use ($customerService): array {
                 $id = $this->readId($request);
                 $payload = $this->readPayload($request);
-                $item = $this->customerService->update($id, $payload, $this->customerService->getDefaultFields());
+                $item = $customerService->update($id, $payload, $customerService->getDefaultFields());
                 if ($item === null) {
                     throw new ApiException('Resource not found.', 404, 'not_found');
                 }
@@ -538,9 +545,9 @@ final class WooRouteRegistrar
         }
 
         if (in_array('delete', $customerActions, true)) {
-            $router->delete($basePath . '/customers/(?P<id>\d+)', function (mixed $request): array {
+            $router->delete($basePath . '/customers/(?P<id>\d+)', function (mixed $request) use ($customerService): array {
                 $id = $this->readId($request);
-                $deleted = $this->customerService->delete($id);
+                $deleted = $customerService->delete($id);
                 if (!$deleted) {
                     throw new ApiException('Resource not found.', 404, 'not_found');
                 }
@@ -1029,7 +1036,7 @@ final class WooRouteRegistrar
     {
         return [
             'fields' => ['required' => false, 'type' => 'string'],
-            'role' => ['required' => false, 'type' => 'string'],
+            'role' => ['required' => false, 'description' => 'Allowed role slug, comma-separated slugs, or array; narrows the configured policy.'],
             'email' => ['required' => false, 'type' => 'string'],
             'search' => ['required' => false, 'type' => 'string'],
             'sort' => ['required' => false, 'type' => 'string'],
@@ -1045,6 +1052,9 @@ final class WooRouteRegistrar
     {
         return [
             'fields' => ['required' => false, 'type' => 'string'],
+            'state' => ['required' => false, 'type' => 'string', 'enum' => ['active', 'expiring', 'expired', 'exhausted', 'draft', 'scheduled']],
+            'status' => ['required' => false, 'type' => 'string', 'enum' => ['publish', 'draft', 'future']],
+            'expiring_days' => ['required' => false, 'type' => 'integer', 'minimum' => 1, 'maximum' => 3650],
             'code' => ['required' => false, 'type' => 'string'],
             'search' => ['required' => false, 'type' => 'string'],
             'sort' => ['required' => false, 'type' => 'string'],

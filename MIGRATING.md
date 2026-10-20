@@ -4,6 +4,28 @@ The Composer package version and your REST namespace version are independent.
 Updating the library does not rename your `myapp/v1` routes. Treat changes to your
 own response schemas and permissions as changes to your application's API contract.
 
+## After 1.1.1 (unreleased)
+
+- Customer routes still default to the `customer` role, with stronger exclusion of
+  privileged multi-role accounts, direct administrative capabilities and super
+  administrators. Those objects can now return 404 where older code returned them.
+  Configure `CustomerRolePolicy` explicitly to include other customer-like roles.
+  `allowPrivilegedRoles: true` is a server-side opt-in; request filters cannot enable it.
+- Customer metadata writes reject known WordPress role/capability/session keys even
+  when they do not start with an underscore. Reads omit those keys. Review third-party
+  authorization metadata separately and apply an application allowlist.
+- Coupon default read DTOs gain `state` and omit `meta_data`. Trusted callers requiring
+  public plugin metadata must request the field explicitly. State is a management
+  summary, not a checkout-validity decision. Existing unfiltered lists remain published
+  coupons, including expired/exhausted coupons; filtering is opt-in.
+- Analytics is opt-in through `WooAnalyticsService`; existing registrar route sets are
+  unchanged. Native report capability and historical import coverage are mandatory.
+  The wrapper does not initialize imports or add a cross-user response cache.
+- PHPStan analysis now has a 3 GB memory limit and at most two workers for the large
+  WordPress/WooCommerce stubs. The runtime smoke job provisions disposable MySQL/WP/Woo.
+
+No package version was published and no production database migration is required.
+
 ## 1.1.0 to 1.1.1
 
 This is a bug-fix release for existing APIs. It adds no Store API, cart, checkout,

@@ -16,7 +16,10 @@ final class CouponListQuery
         public readonly string $sortField,
         public readonly string $sortDirection,
         public readonly int $page,
-        public readonly int $perPage
+        public readonly int $perPage,
+        public readonly ?string $state = null,
+        public readonly string $status = 'publish',
+        public readonly int $expiringDays = 30
     ) {
     }
 }

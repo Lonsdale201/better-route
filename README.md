@@ -459,6 +459,117 @@ checks after a successful install or migration. Product `price` is read-only;
 customer email and coupon code are required on create; nested order/customer
 fields reject unknown keys.
 
+### Configurable customer visibility (unreleased, #23)
+
+The default remains `customer` accounts. Configure one immutable policy per service
+or route registration when other roles are customer-like in your application:
+
+```php
+use BetterRoute\Integration\Woo\CustomerRolePolicy;
+use BetterRoute\Integration\Woo\WooCustomerService;
+
+$policy = new CustomerRolePolicy(['customer', 'subscriber', 'wholesale_customer']);
+$service = new WooCustomerService($policy);
+// Or pass 'customerRoles' => $policy to wooRouteRegistrar()->register(...).
+```
+
+`role=subscriber`, comma-separated slugs and role arrays only narrow that policy.
+Omitting the filter selects all configured roles. List, get, update and delete use
+the same visibility rule; constructing a query DTO directly cannot widen it.
+Accounts with administrative roles/capabilities, including multi-role accounts and
+multisite super administrators, are excluded unless the server explicitly sets
+`allowPrivilegedRoles: true`. Explicit capability denials are conservatively excluded
+too, matching WordPress user-query semantics. `excludedRoles` adds explicit exclusions.
+Configuration never changes user roles. Creation still creates a customer and is
+denied if the policy excludes `customer`; native create/edit/delete user checks remain.
+Explicitly requested `orders_count` and `total_spent` work for other allowed roles.
+
+Role and stored capability exclusions run before counting/pagination. Arbitrary
+dynamic `user_has_cap` filters also run in the object guard; they can remove rows
+after the SQL count, so such integrations must account for shorter pages/totals.
+Customer metadata rejects known WordPress authorization/session keys on writes and
+omits them on reads. Use an application metadata allowlist for third-party secrets.
+
+### Coupon management views (unreleased, #25)
+
+Coupon lists support `sort=usage_count`, `sort=-usage_count`, `sort=date_expires`
+and their descending variants, with a deterministic ID tie-break. Non-expiring
+coupons sort last in either direction. Filters execute before counting/pagination:
+
+| Parameter | Values / behavior |
+| --- | --- |
+| `state` | `active`, `expiring`, `expired`, `exhausted`, `draft`, `scheduled` |
+| `status` | Native post status `publish` (default), `draft`, `future` |
+| `expiring_days` | 1..3650, default 30; next N times 24 hours |
+
+Draft/scheduled states select their corresponding post status. Conflicting state
+and status filters fail validation. Published state precedence is expired, then
+exhausted, then active. Expiring is the active subset with a nonzero expiry inside
+the window. Expiry equality remains active, matching WooCommerce; usage limit 0
+means unlimited. The derived read-only `state` is included in default DTOs. This is
+an administrative summary; shopper limits, reserved uses and cart rules still apply
+at checkout. Non-published, non-future detail objects are classified as draft.
+
+`meta_data` is absent from all default field sets, including a directly constructed
+parser. Request `fields=id,meta_data` explicitly only for trusted clients. Underscore
+keys remain hidden; other plugin metadata may still contain sensitive information.
+Legacy `expiry_date` values use native Woo date parsing in the shop timezone;
+modern empty `date_expires` overrides legacy data. State/expiry SQL normalizes at
+most 1000 distinct legacy values per query and reports
+`coupon_expiry_migration_required` (503) above that bound, without modifying data.
+
+### WooCommerce Analytics (unreleased, #24)
+
+`BetterRoute::wooAnalyticsService()->report($report, $request)` is a read-only wrapper
+over fixed native `wc-analytics` reports. Register only the reports your application
+needs, inside `rest_api_init`, with your existing authentication middleware:
+
+```php
+$analytics = BetterRoute::wooAnalyticsService();
+$router = BetterRoute::router('myapp', 'v1');
+$router->get('/analytics/revenue', static function ($request) use ($analytics) {
+    return new \BetterRoute\Http\Response(
+        $analytics->report('revenue/stats', $request),
+        200,
+        ['Cache-Control' => 'private, no-store']
+    );
+})->permission(static fn (): bool => current_user_can('view_woocommerce_reports'));
+$router->register();
+```
+
+Reports: `revenue/stats`, `orders/stats`, `products`, `products/stats`, `categories`,
+`customers`, `customers/stats`, `coupons`, `coupons/stats`, `taxes`, `stock`, `variations`.
+The service always requires native `view_woocommerce_reports`, preserves the current
+user and runs the upstream REST permission checks. Stock retains its extra native
+product permissions. It performs no HTTP loopback, user elevation, imports or wrapper
+caching. Authentication must establish the native WP user; route intent alone does
+not authenticate anyone. Add application rate limits for staff reporting workloads.
+
+Queries use ISO8601 `after`/`before` datetimes, defaulting to the last seven days in
+the shop timezone. Explicit offsets are converted to that timezone. Windows are
+ordered and at most 366 days, or 31 days for hourly intervals. `page` is 1..10000 and
+`per_page` is 1..100. `interval` is hour/day/week/month/quarter/year only where the
+native report supports it. `orderby`/`order` and `segmentby` use fixed report-specific
+allowlists; unsupported parameters (including `_fields`, `context` and cache-refresh
+bypasses) fail validation. Customers stats maps the date window to registration
+dates and has no pagination/interval parameters. Stock has no date window.
+`compare_after` and `compare_before` add one independently validated comparison window.
+
+Responses contain `report`, allowlisted `data` and pagination `meta`; stats return
+`totals`/`intervals`, customer stats totals only, and collections return `items`.
+Currency values are decimal strings; fractional averages remain numeric. Native
+links, raw customer contact fields and arbitrary extension properties are omitted.
+`meta.totalUnit` distinguishes intervals from collection items. Response collections
+and each segment list are limited to 100 entries; this bounds output, not upstream
+grouping cost. Comparisons return a second result in `comparison`.
+
+Analytics must be enabled and its native import status available. Unknown, running,
+incomplete or insufficient historical coverage returns `analytics_data_not_ready`
+(503), for both windows. Initialize/import Analytics through WooCommerce before use.
+`meta.readiness=idle` describes the native import state, not a guarantee of realtime
+synchronization. Stock does not depend on import readiness. Disabled analytics and
+unavailable native reports produce sanitized 503 errors; permissions produce 403.
+
 ## Error Contract
 
 ```json
@@ -483,6 +594,23 @@ composer test
 composer analyse
 composer cs-check
 ```
+
+The CI workflow also installs disposable WordPress 6.9.4 / WooCommerce 10.9.4 and runs
+the service/Analytics smoke suites on PHP 8.1 and 8.3, with HPOS and CPT storage.
+To reproduce on a **disposable database only**, install/activate WooCommerce, set
+the desired storage option, run `WC_Install::create_tables()`, then execute:
+
+```bash
+wp eval "require '/absolute/path/better-route/tests/smoke/woo-services-smoke.php';"
+wp eval "require '/absolute/path/better-route/tests/smoke/woo-analytics-smoke.php';"
+```
+
+These fixtures create/delete synthetic users, roles, coupons, products and orders.
+Mail/HTTP are blocked during execution. Analytics lookup rows are populated with
+native Woo import methods; import-readiness states use request-local controlled
+providers. The suites do not validate a complete background import or external
+identity provider. HTTP authentication was separately checked on local loopback
+using native WordPress Application Passwords.
 
 ## Current Status
 
