@@ -1,6 +1,20 @@
 # better-route
 
-[![OPEN BETTER-ROUTE DOCS](https://img.shields.io/badge/OPEN-BETTER--ROUTE%20DOCS-27AE60?style=for-the-badge&labelColor=2C3E50)](https://lonsdale201.github.io/better-docs/docs/better-route/getting-started/installation)
+<p align="center">
+  <a href="https://lonsdale201.github.io/better-docs/docs/better-route/getting-started/installation"><img alt="Documentation" src="https://img.shields.io/badge/Docs-Better%20Route-27AE60?style=for-the-badge&logo=readthedocs&logoColor=white&labelColor=2C3E50"></a>
+  <a href="https://packagist.org/packages/better-route/better-route"><img alt="Packagist version" src="https://img.shields.io/packagist/v/better-route/better-route?style=for-the-badge&logo=packagist&logoColor=white&label=Packagist&labelColor=2C3E50&color=F28D1A"></a>
+  <a href="https://github.com/Lonsdale201/better-route/releases/latest"><img alt="Download latest release" src="https://img.shields.io/github/v/release/Lonsdale201/better-route?style=for-the-badge&logo=github&logoColor=white&label=Download&labelColor=2C3E50&color=1F6FEB"></a>
+  <a href="https://hub.xerj.org/contributors/Lonsdale201"><img alt="XERJ Corpus Hub contributor" src="https://img.shields.io/badge/XERJ%20Corpus%20Hub-Contributor-7C3AED?style=for-the-badge&labelColor=11120F"></a>
+</p>
+
+<p align="center">
+  <a href="https://github.com/Lonsdale201/better-route/actions/workflows/ci.yml"><img alt="CI" src="https://img.shields.io/github/actions/workflow/status/Lonsdale201/better-route/ci.yml?branch=main&label=CI&logo=githubactions&logoColor=white"></a>
+  <a href="https://packagist.org/packages/better-route/better-route"><img alt="PHP version" src="https://img.shields.io/packagist/dependency-v/better-route/better-route/php?logo=php&logoColor=white&color=777BB4"></a>
+  <a href="https://packagist.org/packages/better-route/better-route/stats"><img alt="Packagist installs" src="https://img.shields.io/packagist/dt/better-route/better-route?label=installs&logo=packagist&logoColor=white&color=F28D1A"></a>
+  <a href="https://github.com/Lonsdale201/better-route/releases"><img alt="Release downloads" src="https://img.shields.io/github/downloads/Lonsdale201/better-route/total?label=release%20downloads&logo=github&color=1F6FEB"></a>
+  <a href="https://github.com/Lonsdale201/better-route/stargazers"><img alt="GitHub stars" src="https://img.shields.io/github/stars/Lonsdale201/better-route?logo=github&label=stars&color=E3B341"></a>
+  <a href="LICENSE"><img alt="License" src="https://img.shields.io/packagist/l/better-route/better-route?color=blue"></a>
+</p>
 
 A thin PHP 8.3+ REST routing and resource library for WordPress.
 
